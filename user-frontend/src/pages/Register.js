@@ -1,11 +1,7 @@
 import { useState } from "react";
 
 function Register() {
-  const [form, setForm] = useState({
-    full_name: "",
-    email: "",
-    password: "",
-  });
+  const [form, setForm] = useState({ full_name: "", email: "", password: "" });
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -13,16 +9,12 @@ function Register() {
     try {
       const res = await fetch("http://127.0.0.1:8000/register", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
       });
 
       const data = await res.json();
-
       alert(data.message);
-
       if (data.success) {
         window.location.href = "/";
       }
@@ -39,7 +31,7 @@ function Register() {
           <p>Cyber Safety Portal for Defence</p>
         </div>
 
-        <h2 className="form-title">User Registration</h2>
+        <h2 className="form-title">Secure Registration</h2>
 
         <form className="form" onSubmit={handleRegister}>
           <input
@@ -61,21 +53,18 @@ function Register() {
           <input
             type="password"
             placeholder="Create password"
+            minLength="6"
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
             required
           />
 
-          <button className="btn" type="submit">
-            Create Account
-          </button>
+          <button className="btn" type="submit">Create Account</button>
         </form>
 
         <div className="link-text">
           Already have an account?
-          <span className="link-btn" onClick={() => (window.location.href = "/")}>
-            Login
-          </span>
+          <span className="link-btn" onClick={() => (window.location.href = "/")}>Login</span>
         </div>
       </div>
     </div>
