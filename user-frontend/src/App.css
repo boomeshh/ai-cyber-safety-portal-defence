@@ -268,3 +268,31 @@ body {
     font-size: 1.9rem;
   }
 }
+
+.campaign-alert {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(217, 119, 6, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fde68a;
+  font-weight: 700;
+}
+.indicator-list {
+  margin-top: 8px;
+  padding-left: 20px;
+  color: #cbd5e1;
+  display: grid;
+  gap: 6px;
+}
+.evidence-box { display: grid; gap: 10px; }
+.evidence-header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.mini-link { color: #7dd3fc; text-decoration: none; font-weight: 700; }
+.evidence-image, .evidence-frame, .evidence-media {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #334155;
+  background: #020617;
+}
+.evidence-image { max-height: 360px; object-fit: contain; }
+.evidence-frame { min-height: 360px; }
