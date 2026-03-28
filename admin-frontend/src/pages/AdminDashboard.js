@@ -1,189 +1,113 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from 'react';
+import { getAuthHeaders, getStoredUser, logoutUser } from '../utils/auth';
+
+const API = 'http://127.0.0.1:8000';
+const statusOptions = ['Open', 'Under Review', 'Escalated', 'Action Initiated', 'Resolved', 'Archived'];
 
 function getRiskBadgeClass(level) {
   switch (level) {
-    case "Critical":
-      return "badge-critical";
-    case "High":
-      return "badge-high";
-    case "Medium":
-      return "badge-medium";
-    default:
-      return "badge-low";
+    case 'Critical': return 'risk-badge badge-critical';
+    case 'High': return 'risk-badge badge-high';
+    case 'Medium': return 'risk-badge badge-medium';
+    default: return 'risk-badge badge-low';
   }
 }
 
-function AdminDashboard() {
-  const [analytics, setAnalytics] = useState({
-    total: 0,
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    open_cases: 0,
-    escalated: 0,
-    resolved: 0,
-  });
+function LoginGate({ onLogin }) {
+  const [email, setEmail] = useState('admin@rakshak.ai');
+  const [password, setPassword] = useState('admin123');
+  const [error, setError] = useState('');
+  const handleLogin = async (e) => {
+    e.preventDefault(); setError('');
+    try {
+      const res = await fetch(`${API}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message || 'Login failed');
+      if (data.user.role !== 'admin') throw new Error('This account cannot access admin dashboard');
+      localStorage.setItem('token', data.token); localStorage.setItem('user', JSON.stringify(data.user)); onLogin(data.user);
+    } catch (err) { setError(err.message); }
+  };
+  return <div className="loading-screen"><div className="panel" style={{ maxWidth: 420, width: '100%' }}><div className="panel-header"><h2>Admin Secure Access</h2></div><p style={{ color: '#cbd5e1', marginBottom: 16 }}>Use an account with role <strong>admin</strong> to access triage, users, and audit logs.</p><form onSubmit={handleLogin} style={{ display: 'grid', gap: 12 }}><input style={inputStyle} value={email} onChange={(e) => setEmail(e.target.value)} /><input style={inputStyle} type="password" value={password} onChange={(e) => setPassword(e.target.value)} />{error ? <div style={{ color: '#fca5a5' }}>{error}</div> : null}<button style={buttonStyle}>Enter Admin Dashboard</button></form></div></div>;
+}
 
-  const [complaints, setComplaints] = useState([]);
+export default function AdminDashboard() {
+  const [user, setUser] = useState(getStoredUser());
+  const [overview, setOverview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [riskFilter, setRiskFilter] = useState('All');
 
-  const loadDashboardData = () => {
-    fetch("http://127.0.0.1:8000/analytics")
-      .then((res) => res.json())
-      .then((data) => setAnalytics(data))
-      .catch(() => alert("Failed to load analytics"));
-
-    fetch("http://127.0.0.1:8000/complaints")
-      .then((res) => res.json())
-      .then((data) => setComplaints(data))
-      .catch(() => alert("Failed to load complaints"));
+  const loadDashboardData = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`${API}/admin/overview`, { headers: getAuthHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || 'Failed to load dashboard');
+      setOverview(data); setError('');
+    } catch (err) {
+      setError(err.message);
+      if (err.message.toLowerCase().includes('session') || err.message.toLowerCase().includes('missing')) { logoutUser(); setUser(null); }
+    } finally { setLoading(false); }
   };
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
+  useEffect(() => { if (user?.role === 'admin') loadDashboardData(); else setLoading(false); }, [user]);
 
   const handleStatusChange = async (caseId, newStatus) => {
     try {
-      const res = await fetch(
-        `http://127.0.0.1:8000/update-status/${caseId}?status=${encodeURIComponent(newStatus)}`,
-        {
-          method: "PUT",
-        }
-      );
-
+      const res = await fetch(`${API}/update-status/${caseId}?status=${encodeURIComponent(newStatus)}`, { method: 'PUT', headers: getAuthHeaders() });
       const data = await res.json();
-
-      if (data.success) {
-        alert("Status updated successfully");
-        loadDashboardData();
-      } else {
-        alert("Status update failed");
-      }
-    } catch (error) {
-      alert("Backend connection failed while updating status");
-    }
+      if (!res.ok || !data.success) throw new Error(data.detail || data.message || 'Status update failed');
+      loadDashboardData();
+    } catch (err) { alert(err.message); }
   };
 
-  const criticalComplaints = complaints.filter(
-    (item) => item.risk_level === "Critical"
-  );
+  const filteredComplaints = useMemo(() => {
+    const complaints = overview?.complaints || [];
+    return complaints.filter((item) => (statusFilter === 'All' || item.status === statusFilter) && (riskFilter === 'All' || item.risk_level === riskFilter));
+  }, [overview, statusFilter, riskFilter]);
+
+  if (!user || user.role !== 'admin') return <LoginGate onLogin={setUser} />;
+  if (loading) return <div className="loading-screen"><h2>Loading Admin Control Room...</h2></div>;
+  if (error) return <div className="dashboard-shell" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><div className="panel" style={{ maxWidth: 520 }}><h2>Admin dashboard unavailable</h2><p style={{ color: '#cbd5e1' }}>{error}</p><button style={buttonStyle} onClick={loadDashboardData}>Retry</button></div></div>;
+
+  const analytics = overview?.analytics || {};
+  const auditLogs = overview?.audit_logs || [];
+  const users = overview?.users || [];
+  const graph = overview?.campaign_graph;
 
   return (
-    <div className="admin-page">
-      <div className="admin-shell">
-        <div className="admin-header">
-          <div>
-            <h1>Rakshak AI Admin Dashboard</h1>
-            <p>Monitor complaints, risk levels, live alerts, and case status updates.</p>
-          </div>
-
-          <button
-            className="btn"
-            onClick={() =>
-              window.open("http://127.0.0.1:8000/download/excel", "_blank")
-            }
-          >
-            Download Excel
-          </button>
-        </div>
-
-        {criticalComplaints.length > 0 && (
-          <div
-            style={{
-              background: "#dc2626",
-              color: "white",
-              padding: "14px 18px",
-              borderRadius: "16px",
-              marginBottom: "20px",
-              fontWeight: "700",
-              boxShadow: "0 8px 20px rgba(220,38,38,0.25)",
-            }}
-          >
-            🚨 Critical Alert Detected — {criticalComplaints.length} high priority case(s) require immediate review.
-          </div>
-        )}
-
-        <div className="admin-cards">
-          <div className="admin-card">
-            <h3>Total Complaints</h3>
-            <h2>{analytics.total}</h2>
-          </div>
-
-          <div className="admin-card">
-            <h3>Critical Alerts</h3>
-            <h2>{analytics.critical}</h2>
-          </div>
-
-          <div className="admin-card">
-            <h3>Open Cases</h3>
-            <h2>{analytics.open_cases}</h2>
-          </div>
-
-          <div className="admin-card">
-            <h3>Resolved</h3>
-            <h2>{analytics.resolved}</h2>
-          </div>
-        </div>
-
-        <div className="table-box">
-          <h2>All Complaints</h2>
-
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>User</th>
-                  <th>Category</th>
-                  <th>Threat</th>
-                  <th>Risk Score</th>
-                  <th>Risk Level</th>
-                  <th>Status</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {complaints.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.id}</td>
-                    <td>{item.user_name}</td>
-                    <td>{item.category}</td>
-                    <td>{item.threat_type}</td>
-                    <td>{item.risk_score}</td>
-                    <td>
-                      <span className={`risk-badge ${getRiskBadgeClass(item.risk_level)}`}>
-                        {item.risk_level}
-                      </span>
-                    </td>
-                    <td>
-                      <select
-                        value={item.status}
-                        onChange={(e) => handleStatusChange(item.id, e.target.value)}
-                        style={{
-                          background: "#111827",
-                          color: "white",
-                          border: "1px solid #334155",
-                          borderRadius: "10px",
-                          padding: "8px 10px",
-                        }}
-                      >
-                        <option value="Open">Open</option>
-                        <option value="Under Review">Under Review</option>
-                        <option value="Escalated">Escalated</option>
-                        <option value="Resolved">Resolved</option>
-                      </select>
-                    </td>
-                    <td>{item.created_at}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+    <div className="dashboard-shell">
+      <div className="dashboard-topbar">
+        <div><h1 style={{ marginBottom: 6 }}>Admin Triage Dashboard</h1><p style={{ color: '#94a3b8' }}>Role-based review, case operations, user registry, audit visibility, and campaign intelligence.</p></div>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}><div style={{ color: '#cbd5e1', fontSize: 14 }}>{user.full_name} · {user.role}</div><button style={buttonStyle} onClick={() => { logoutUser(); setUser(null); }}>Logout</button></div>
       </div>
+
+      <div className="stats-grid">
+        <StatCard label="Total Cases" value={analytics.total} />
+        <StatCard label="Critical" value={analytics.critical} tone="critical" />
+        <StatCard label="Open" value={analytics.open_cases} />
+        <StatCard label="Escalated" value={analytics.escalated} />
+        <StatCard label="Linked Indicators" value={analytics.linked_indicator_cases} />
+        <StatCard label="Auto Escalated" value={analytics.auto_escalated_cases} />
+      </div>
+
+      <div className="panel" style={{ marginTop: 22 }}>
+        <div className="panel-header"><h2>Complaint Queue</h2><div style={{ display: 'flex', gap: 10 }}><select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} style={inputStyle}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}><option>All</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}</select></div></div>
+        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th></tr></thead><tbody>{filteredComplaints.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <a href={`${API}/complaints/${item.id}/evidence`} target="_blank" rel="noreferrer" className="text-link">Open</a> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td></tr>)}</tbody></table></div>
+      </div>
+
+      <div className="dashboard-grid" style={{ marginTop: 22 }}>
+        <div className="panel"><div className="panel-header"><h2>Campaign Intelligence</h2></div>{graph?.nodes?.length ? <div className="graph-grid">{graph.nodes.map((node) => <div key={node.id} className={`graph-node ${node.kind}`}><div className="graph-kind">{node.kind}</div><div className="graph-label">{node.label}</div></div>)}<div className="graph-edge-list"><strong>Links</strong>{graph.edges.map((edge, i) => <div key={i} className="edge-item">{edge.source.slice(0, 18)} → {edge.target.slice(0, 18)} <span>{edge.label}</span></div>)}</div></div> : <p style={{ color: '#94a3b8' }}>No repeated campaign graph yet.</p>}</div>
+        <div className="panel"><div className="panel-header"><h2>Recent Audit Trail</h2></div><div className="list-wrap">{auditLogs.map((log) => <div key={log.id} className="incident-card"><div className="incident-top"><strong>{log.action}</strong><span style={{ color: '#93c5fd', fontSize: 12 }}>{log.created_at}</span></div><p><strong>Actor:</strong> {log.actor_name || 'system'} ({log.actor_role || 'system'})</p><p><strong>Target:</strong> {log.target_type} {log.target_id || '-'}</p>{log.old_value || log.new_value ? <p><strong>Change:</strong> {log.old_value || '-'} → {log.new_value || '-'}</p> : null}{log.details ? <p><strong>Details:</strong> {log.details}</p> : null}</div>)}</div></div>
+      </div>
+
+      <div className="panel" style={{ marginTop: 22 }}><div className="panel-header"><h2>Registered Users</h2></div><div className="table-wrap"><table className="complaints-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead><tbody>{users.map((person) => <tr key={person.id}><td>{person.full_name}</td><td>{person.email}</td><td>{person.role}</td><td>{person.created_at}</td></tr>)}</tbody></table></div></div>
     </div>
   );
 }
 
-export default AdminDashboard;
+function StatCard({ label, value, tone }) { return <div className={`stat-card ${tone === 'critical' ? 'critical-border' : ''}`}><div className="stat-label">{label}</div><div className="stat-value">{value ?? 0}</div></div>; }
+
+const inputStyle = { background: '#0f172a', color: 'white', border: '1px solid #334155', borderRadius: 10, padding: '10px 12px' };
+const buttonStyle = { background: 'linear-gradient(135deg, #f59e0b, #f97316)', color: '#081120', border: 'none', borderRadius: 10, padding: '10px 14px', cursor: 'pointer', fontWeight: 700 };

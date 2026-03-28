@@ -1,9 +1,8 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import "./App.css";
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import './App.css';
+import AdminDashboard from './pages/AdminDashboard';
 
-import AdminDashboard from "./pages/AdminDashboard";
-
-function App() {
+export default function App() {
   return (
     <Router>
       <Routes>
@@ -12,5 +11,3 @@ function App() {
     </Router>
   );
 }
-
-export default App;
