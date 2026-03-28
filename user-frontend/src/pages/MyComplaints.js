@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getAuthHeaders, getStoredUser } from "../utils/auth";
 
 function getRiskBadgeClass(level) {
   switch (level) {
@@ -14,7 +15,7 @@ function getRiskBadgeClass(level) {
 }
 
 function MyComplaints() {
-  const user = JSON.parse(localStorage.getItem("user"));
+  const user = getStoredUser();
   const [complaints, setComplaints] = useState([]);
 
   useEffect(() => {
@@ -23,9 +24,11 @@ function MyComplaints() {
       return;
     }
 
-    fetch(`http://127.0.0.1:8000/my-complaints/${user.id}`)
+    fetch(`http://127.0.0.1:8000/my-complaints/${user.id}`, {
+      headers: getAuthHeaders(),
+    })
       .then((res) => res.json())
-      .then((data) => setComplaints(data))
+      .then((data) => setComplaints(Array.isArray(data) ? data : []))
       .catch(() => alert("Failed to load complaints"));
   }, [user]);
 
@@ -56,7 +59,10 @@ function MyComplaints() {
                 <p><strong>Category:</strong> {item.category}</p>
                 <p><strong>Threat Type:</strong> {item.threat_type}</p>
                 <p><strong>Risk Score:</strong> {item.risk_score}</p>
+                <p><strong>AI Confidence:</strong> {item.ai_confidence || 0}%</p>
                 <p><strong>Status:</strong> {item.status}</p>
+                <p><strong>Channel:</strong> {item.attack_channel || "Unknown"}</p>
+                <p><strong>Linked Cases:</strong> {item.linked_case_count || 0}</p>
                 <p><strong>Date:</strong> {item.created_at}</p>
 
                 <div className="complaint-section">
