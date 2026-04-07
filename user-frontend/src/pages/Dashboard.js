@@ -1,10 +1,12 @@
+import { useNavigate } from "react-router-dom";
 import { getStoredUser, logoutUser } from "../utils/auth";
 
 function Dashboard() {
+  const navigate = useNavigate();
   const user = getStoredUser();
 
   if (!user) {
-    window.location.href = "/";
+    navigate("/");
     return null;
   }
 
@@ -24,15 +26,16 @@ function Dashboard() {
               Report suspicious messages, links, attachments, audio calls, videos,
               impersonation attempts, and cyber fraud.
             </p>
-            <button className="btn" onClick={() => (window.location.href = "/submit")}>Open Complaint Form</button>
+            <button className="btn" onClick={() => navigate("/submit")}>Open Complaint Form</button>
           </div>
 
           <div className="action-card">
             <h3>My Complaints</h3>
             <p>
-              View your submitted complaints, AI confidence, linked indicators, and current case status.
+              View your submitted complaints, AI confidence, linked indicators,
+              and current case status.
             </p>
-            <button className="btn" onClick={() => (window.location.href = "/my-complaints")}>View My Complaints</button>
+            <button className="btn" onClick={() => navigate("/my-complaints")}>View My Complaints</button>
           </div>
         </div>
 
@@ -40,7 +43,7 @@ function Dashboard() {
           className="btn logout-btn"
           onClick={() => {
             logoutUser();
-            window.location.href = "/";
+            navigate("/");
           }}
         >
           Logout
