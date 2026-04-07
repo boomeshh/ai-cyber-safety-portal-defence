@@ -3,4 +3,4 @@ uvicorn[standard]
 python-multipart
 pandas
 openpyxl
-pydantic[email]
+pydantic[email]git 

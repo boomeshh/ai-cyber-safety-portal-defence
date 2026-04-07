@@ -1,10 +1,20 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { getStoredUser } from "../utils/auth";
 
 function Login() {
+  const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const user = getStoredUser();
+    if (user) navigate("/dashboard");
+  }, [navigate]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
+    setLoading(true);
 
     try {
       const res = await fetch("http://127.0.0.1:8000/login", {
@@ -15,15 +25,18 @@ function Login() {
 
       const data = await res.json();
 
-      if (data.success) {
-        localStorage.setItem("user", JSON.stringify(data.user));
-        localStorage.setItem("token", data.token);
-        window.location.href = "/dashboard";
-      } else {
-        alert(data.message);
+      if (!data.success) {
+        alert(data.message || "Login failed");
+        return;
       }
+
+      localStorage.setItem("user", JSON.stringify(data.user));
+      localStorage.setItem("token", data.token);
+      navigate("/dashboard");
     } catch (error) {
       alert("Backend connection failed. Check if backend is running on port 8000.");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -54,12 +67,14 @@ function Login() {
             required
           />
 
-          <button className="btn" type="submit">Login</button>
+          <button className="btn" type="submit" disabled={loading}>
+            {loading ? "Logging in..." : "Login"}
+          </button>
         </form>
 
         <div className="link-text">
           New user?
-          <span className="link-btn" onClick={() => (window.location.href = "/register")}>Register</span>
+          <span className="link-btn" onClick={() => navigate("/register")}>Register</span>
         </div>
       </div>
     </div>
