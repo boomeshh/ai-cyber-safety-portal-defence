@@ -11,7 +11,9 @@ import hashlib
 import secrets
 import mimetypes
 
-app = FastAPI(title="Rakshak AI Phase 3")
+from ml_model import predict_text
+
+app = FastAPI(title="Rakshak AI - Hybrid ML Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -33,9 +35,10 @@ ALLOWED_EXTENSIONS = {
     ".pdf", ".doc", ".docx", ".txt", ".csv",
     ".mp3", ".wav", ".m4a",
     ".mp4", ".mov", ".avi", ".mkv",
-    ".apk", ".zip"
+    ".apk", ".zip", ".exe"
 }
 MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -51,7 +54,7 @@ def ensure_column(cursor, table_name: str, column_name: str, definition: str):
         cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
 
 
-# ---------- Security helpers ----------
+# ---------------- Security Helpers ----------------
 def hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000)
@@ -70,6 +73,7 @@ def create_session(user_id: str, role: str) -> str:
     token = secrets.token_urlsafe(40)
     created_at = datetime.now()
     expires_at = created_at + timedelta(hours=12)
+
     conn = get_connection()
     conn.execute(
         "INSERT INTO sessions (token, user_id, role, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -96,6 +100,7 @@ def get_current_user(authorization: Optional[str]) -> dict:
 
     conn = get_connection()
     session = conn.execute("SELECT * FROM sessions WHERE token = ?", (token,)).fetchone()
+
     if not session:
         conn.close()
         raise HTTPException(status_code=401, detail="Invalid session")
@@ -111,8 +116,10 @@ def get_current_user(authorization: Optional[str]) -> dict:
         (session["user_id"],),
     ).fetchone()
     conn.close()
+
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+
     return dict(user)
 
 
@@ -123,7 +130,17 @@ def require_roles(authorization: Optional[str], allowed_roles: list[str]) -> dic
     return user
 
 
-def write_audit(actor_user_id, actor_name, actor_role, action, target_type, target_id=None, old_value=None, new_value=None, details=None):
+def write_audit(
+    actor_user_id,
+    actor_name,
+    actor_role,
+    action,
+    target_type,
+    target_id=None,
+    old_value=None,
+    new_value=None,
+    details=None,
+):
     conn = get_connection()
     conn.execute(
         """
@@ -150,6 +167,7 @@ def write_audit(actor_user_id, actor_name, actor_role, action, target_type, targ
     conn.close()
 
 
+# ---------------- Database Init ----------------
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
@@ -193,6 +211,8 @@ def init_db():
     ensure_column(cursor, "complaints", "attack_channel", "TEXT")
     ensure_column(cursor, "complaints", "ai_confidence", "INTEGER DEFAULT 0")
     ensure_column(cursor, "complaints", "linked_case_count", "INTEGER DEFAULT 0")
+    ensure_column(cursor, "complaints", "ml_prediction", "TEXT")
+    ensure_column(cursor, "complaints", "model_used", "TEXT")
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
@@ -227,15 +247,24 @@ def init_db():
         ("ADM-DEMO-001", "Rakshak Admin", "admin@rakshak.ai", "admin", "admin123"),
         ("CERT-DEMO-001", "Rakshak CERT Officer", "cert@rakshak.ai", "cert", "cert123"),
     ]
+
     for user_id, full_name, email, role, raw_password in demo_accounts:
         existing = cursor.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
         if not existing:
             cursor.execute(
                 "INSERT INTO users (id, full_name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (user_id, full_name, email, hash_password(raw_password), role, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+                (
+                    user_id,
+                    full_name,
+                    email,
+                    hash_password(raw_password),
+                    role,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ),
             )
 
     conn.commit()
+
     rows = cursor.execute("SELECT id, password, password_hash FROM users").fetchall()
     for row in rows:
         if row["password"] and not row["password_hash"]:
@@ -243,13 +272,15 @@ def init_db():
                 "UPDATE users SET password_hash = ?, password = NULL WHERE id = ?",
                 (hash_password(row["password"]), row["id"]),
             )
+
     conn.commit()
     conn.close()
 
 
-# ---------- AI helpers ----------
+# ---------------- AI / ML Helpers ----------------
 def detect_channel(text: str, url: str, evidence_name: str) -> str:
     base = f"{text} {url} {evidence_name}".lower()
+
     if any(word in base for word in ["whatsapp", "wa.me"]):
         return "WhatsApp"
     if any(word in base for word in ["telegram", "t.me"]):
@@ -264,10 +295,39 @@ def detect_channel(text: str, url: str, evidence_name: str) -> str:
         return "Social Media"
     if "http" in base or "www." in base:
         return "Web"
+
     return "Unknown"
 
 
-def calculate_risk(complaint_text: str, suspicious_url: str, evidence_name: str = ""):
+def get_ml_result(complaint_text: str) -> dict:
+    try:
+        result = predict_text(complaint_text)
+        prediction = str(result.get("prediction", "safe")).strip().lower()
+        confidence = float(result.get("confidence", 0.50))
+        all_scores = result.get("all_scores", {})
+
+        if prediction not in ["safe", "suspicious", "phishing", "spam", "malware", "fraud"]:
+            prediction = "suspicious"
+
+        confidence = max(0.0, min(confidence, 1.0))
+
+        return {
+            "prediction": prediction,
+            "confidence": confidence,
+            "all_scores": all_scores,
+            "model_used": "TF-IDF + Logistic Regression",
+        }
+    except Exception as e:
+        print("ML prediction failed:", e)
+        return {
+            "prediction": "safe",
+            "confidence": 0.50,
+            "all_scores": {},
+            "model_used": "ML Fallback",
+        }
+
+
+def calculate_rule_risk(complaint_text: str, suspicious_url: str, evidence_name: str = ""):
     text = (complaint_text or "").lower()
     url = (suspicious_url or "").lower()
     file_name = (evidence_name or "").lower()
@@ -278,14 +338,41 @@ def calculate_risk(complaint_text: str, suspicious_url: str, evidence_name: str 
     tags = set()
 
     keyword_weights = {
-        "otp": 25, "password": 25, "bank": 20, "login": 18, "verify": 16,
-        "urgent": 12, "immediately": 10, "suspended": 15, "click": 10,
-        "army": 20, "defence": 20, "official": 12, "support": 8,
-        "kyc": 10, "update": 8, "reward": 10, "blocked": 12,
-        "account": 10, "confidential": 16, "classified": 28, "posting": 14,
-        "deployment": 18, "location": 12, "salary": 8, "investment": 8,
-        "apk": 22, "attachment": 14, "resume": 8, "friend request": 14,
-        "romance": 18, "video call": 18,
+        "otp": 25,
+        "password": 25,
+        "bank": 20,
+        "login": 18,
+        "verify": 16,
+        "urgent": 12,
+        "immediately": 10,
+        "suspended": 15,
+        "click": 10,
+        "army": 20,
+        "defence": 20,
+        "official": 12,
+        "support": 8,
+        "kyc": 10,
+        "update": 8,
+        "reward": 10,
+        "blocked": 12,
+        "account": 10,
+        "confidential": 16,
+        "classified": 28,
+        "posting": 14,
+        "deployment": 18,
+        "location": 12,
+        "salary": 8,
+        "investment": 8,
+        "apk": 22,
+        "attachment": 14,
+        "resume": 8,
+        "friend request": 14,
+        "romance": 18,
+        "video call": 18,
+        "refund": 14,
+        "cvv": 20,
+        "card": 12,
+        "transfer": 12,
     }
 
     for word, weight in keyword_weights.items():
@@ -327,7 +414,9 @@ def calculate_risk(complaint_text: str, suspicious_url: str, evidence_name: str 
         tags.add("Honeytrap / Social Engineering")
         risk_notes.append("Conversation pattern may be trying to build trust before exploitation.")
 
-    if any(word in text for word in ["army", "defence", "regiment", "unit", "officer"]) and any(word in text for word in ["verify", "official", "login", "payment", "kyc"]):
+    if any(word in text for word in ["army", "defence", "regiment", "unit", "officer"]) and any(
+        word in text for word in ["verify", "official", "login", "payment", "kyc"]
+    ):
         score += 26
         indicators.append("Possible defence impersonation pattern detected")
         tags.add("Defence Impersonation")
@@ -365,21 +454,81 @@ def calculate_risk(complaint_text: str, suspicious_url: str, evidence_name: str 
 
     if not risk_notes:
         risk_notes.append("The submitted content shows enough suspicious indicators to require verification through official channels.")
+
     if not tags:
         tags.add("Suspicious Communication")
 
     score = min(score, 100)
-    confidence = min(55 + score // 2, 98)
 
-    if score >= 81:
+    return {
+        "rule_score": score,
+        "indicators": indicators,
+        "risk_notes": risk_notes,
+        "tags": tags,
+    }
+
+
+def build_hybrid_result(complaint_text: str, suspicious_url: str, evidence_name: str = ""):
+    rule_result = calculate_rule_risk(complaint_text, suspicious_url, evidence_name)
+    ml_result = get_ml_result(complaint_text)
+
+    final_score = rule_result["rule_score"]
+    tags = set(rule_result["tags"])
+    indicators = list(rule_result["indicators"])
+    risk_notes = list(rule_result["risk_notes"])
+
+    ml_prediction = ml_result["prediction"]
+    ml_confidence = ml_result["confidence"]
+    model_used = ml_result["model_used"]
+
+    if ml_prediction == "phishing":
+        final_score += 28
+        tags.add("ML Phishing Detected")
+        indicators.append("ML model flagged phishing-style text")
+        risk_notes.append("Machine learning model found strong phishing language patterns.")
+    elif ml_prediction == "suspicious":
+        final_score += 18
+        tags.add("ML Suspicious Detected")
+        indicators.append("ML model flagged suspicious communication")
+        risk_notes.append("Machine learning model detected manipulative or suspicious wording.")
+    elif ml_prediction == "spam":
+        final_score += 14
+        tags.add("Spam / Fraud Pattern")
+        indicators.append("ML model flagged spam pattern")
+        risk_notes.append("Text resembles bulk scam or spam communication.")
+    elif ml_prediction == "fraud":
+        final_score += 22
+        tags.add("Financial Fraud")
+        indicators.append("ML model flagged financial fraud pattern")
+        risk_notes.append("Message resembles financial fraud or impersonation behavior.")
+    elif ml_prediction == "malware":
+        final_score += 24
+        tags.add("Malware")
+        indicators.append("ML model flagged malware delivery pattern")
+        risk_notes.append("Text may be associated with malicious file or payload delivery.")
+    else:
+        indicators.append("ML model found no strong malicious text pattern")
+
+    if ml_confidence >= 0.90 and ml_prediction != "safe":
+        final_score += 10
+        indicators.append("Very high-confidence ML alert generated")
+    elif ml_confidence >= 0.75 and ml_prediction != "safe":
+        final_score += 6
+        indicators.append("High-confidence ML alert generated")
+
+    final_score = min(final_score, 100)
+
+    confidence_percent = int(max(55, min(99, (final_score * 0.5) + (ml_confidence * 100 * 0.5))))
+
+    if final_score >= 81:
         level = "Critical"
         mitigation = "Do not interact further. Disconnect affected device if needed, preserve evidence, reset credentials, and escalate to CERT immediately."
         status = "Escalated"
-    elif score >= 61:
+    elif final_score >= 61:
         level = "High"
         mitigation = "Avoid clicking links or opening files. Verify through trusted official channels and change credentials if already exposed."
         status = "Under Review"
-    elif score >= 31:
+    elif final_score >= 31:
         level = "Medium"
         mitigation = "Proceed cautiously. Preserve screenshots/files and verify the sender before taking action."
         status = "Open"
@@ -388,18 +537,31 @@ def calculate_risk(complaint_text: str, suspicious_url: str, evidence_name: str 
         mitigation = "Monitor the issue and verify authenticity through official channels."
         status = "Open"
 
-    reason = "Detected Indicators:\n" + "\n".join([f"• {x}" for x in indicators[:6]])
-    reason += "\n\nRisk Explanation:\n" + " ".join(risk_notes[:3])
+    if not indicators:
+        indicators.append("No strong suspicious indicators detected")
+
+    if not risk_notes:
+        risk_notes.append("Hybrid engine detected mild suspicious characteristics requiring verification.")
+
+    threat_type = " | ".join(sorted(tags))
+    ai_reason = "Detected Indicators:\n"
+    ai_reason += "\n".join([f"• {item}" for item in indicators[:8]])
+    ai_reason += "\n\nRisk Explanation:\n"
+    ai_reason += " ".join(risk_notes[:4])
+    ai_reason += f"\n\nML Summary:\n• Model Used: {model_used}\n• ML Prediction: {ml_prediction}\n• ML Confidence: {round(ml_confidence * 100, 2)}%"
 
     return {
-        "score": score,
+        "score": int(final_score),
         "level": level,
-        "reason": reason,
+        "reason": ai_reason,
         "mitigation": mitigation,
-        "threat_type": " | ".join(sorted(tags)),
-        "confidence": confidence,
+        "threat_type": threat_type,
+        "confidence": int(confidence_percent),
         "status": status,
         "indicators": indicators,
+        "ml_prediction": ml_prediction,
+        "ml_confidence_raw": round(ml_confidence, 4),
+        "model_used": model_used,
     }
 
 
@@ -445,19 +607,30 @@ def build_analytics(rows: list[dict]):
     action_initiated = sum(1 for r in rows if r["status"] == "Action Initiated")
     archived = sum(1 for r in rows if r["status"] == "Archived")
 
-    threat_distribution, channel_distribution, category_distribution = {}, {}, {}
+    threat_distribution = {}
+    channel_distribution = {}
+    category_distribution = {}
+    model_distribution = {}
+
     linked_indicator_cases = 0
     auto_escalated_cases = 0
 
     for row in rows:
-        for threat in row["threat_type"].split(" | "):
+        for threat in (row.get("threat_type") or "Unknown").split(" | "):
             threat_distribution[threat] = threat_distribution.get(threat, 0) + 1
+
         channel = row.get("attack_channel") or "Unknown"
         channel_distribution[channel] = channel_distribution.get(channel, 0) + 1
+
         category = row.get("category") or "Unknown"
         category_distribution[category] = category_distribution.get(category, 0) + 1
+
+        model_name = row.get("model_used") or "Rule-Based"
+        model_distribution[model_name] = model_distribution.get(model_name, 0) + 1
+
         if int(row.get("linked_case_count") or 0) > 0:
             linked_indicator_cases += 1
+
         if row.get("status") == "Escalated" and row.get("risk_level") == "Critical":
             auto_escalated_cases += 1
 
@@ -485,6 +658,7 @@ def build_analytics(rows: list[dict]):
         "risk_distribution": {"Low": low, "Medium": medium, "High": high, "Critical": critical},
         "linked_indicator_cases": linked_indicator_cases,
         "auto_escalated_cases": auto_escalated_cases,
+        "model_distribution": model_distribution,
     }
 
 
@@ -506,30 +680,45 @@ def build_campaign_graph(rows: list[dict]):
             edges.append({"source": source, "target": target, "label": label})
 
     repeated_rows = [r for r in rows if int(r.get("linked_case_count") or 0) > 0][:12]
+
     for row in repeated_rows:
-        c_id = row["id"]
+        complaint_id = row["id"]
         risk = row.get("risk_level", "Low")
-        add_node(c_id, c_id[-8:], "complaint", risk.lower())
+        add_node(complaint_id, complaint_id[-8:], "complaint", risk.lower())
+
         if row.get("suspicious_url"):
-            url_key = f"url:{row['suspicious_url'][:60]}"
-            add_node(url_key, (row['suspicious_url'][:28] + '...') if len(row['suspicious_url']) > 28 else row['suspicious_url'], "url", "alert")
-            add_edge(c_id, url_key, "targets")
+            url_value = row["suspicious_url"]
+            url_key = f"url:{url_value[:60]}"
+            label = (url_value[:28] + "...") if len(url_value) > 28 else url_value
+            add_node(url_key, label, "url", "alert")
+            add_edge(complaint_id, url_key, "targets")
+
         if row.get("evidence_name"):
-            ev_key = f"file:{row['evidence_hash'] or row['evidence_name']}"
-            add_node(ev_key, row['evidence_name'][:24], "evidence", "normal")
-            add_edge(c_id, ev_key, "evidence")
+            ev_key = f"file:{row.get('evidence_hash') or row.get('evidence_name')}"
+            add_node(ev_key, row["evidence_name"][:24], "evidence", "normal")
+            add_edge(complaint_id, ev_key, "evidence")
+
         if row.get("attack_channel"):
             ch_key = f"channel:{row['attack_channel']}"
-            add_node(ch_key, row['attack_channel'], "channel", "normal")
-            add_edge(c_id, ch_key, "via")
+            add_node(ch_key, row["attack_channel"], "channel", "normal")
+            add_edge(complaint_id, ch_key, "via")
+
     return {"nodes": nodes[:30], "edges": edges[:40]}
 
 
 def build_cert_intel(rows: list[dict]):
     live_alerts = [r for r in rows if r["risk_level"] == "Critical"]
     escalated_cases = [r for r in rows if r["status"] == "Escalated"]
-    repeated_cases = sorted([r for r in rows if int(r.get("linked_case_count") or 0) > 0], key=lambda x: int(x.get("linked_case_count") or 0), reverse=True)
-    opsec_cases = [r for r in rows if "OPSEC" in (r.get("threat_type") or "") or "Espionage" in (r.get("threat_type") or "")]
+    repeated_cases = sorted(
+        [r for r in rows if int(r.get("linked_case_count") or 0) > 0],
+        key=lambda x: int(x.get("linked_case_count") or 0),
+        reverse=True,
+    )
+    opsec_cases = [
+        r for r in rows
+        if "OPSEC" in (r.get("threat_type") or "") or "Espionage" in (r.get("threat_type") or "")
+    ]
+
     return {
         "total_cases": len(rows),
         "critical_alerts": len(live_alerts),
@@ -545,6 +734,7 @@ def build_cert_intel(rows: list[dict]):
 init_db()
 
 
+# ---------------- Request Models ----------------
 class RegisterRequest(BaseModel):
     full_name: str
     email: EmailStr
@@ -561,9 +751,10 @@ class StatusUpdate(BaseModel):
     status: str
 
 
+# ---------------- Routes ----------------
 @app.get("/")
 def root():
-    return {"message": "Rakshak AI Phase 3 Backend Running"}
+    return {"message": "Rakshak AI Hybrid Backend Running"}
 
 
 @app.post("/register")
@@ -573,14 +764,33 @@ def register_user(payload: RegisterRequest):
     if existing:
         conn.close()
         return {"success": False, "message": "Email already registered"}
+
     user_id = f"USR-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     conn.execute(
         "INSERT INTO users (id, full_name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (user_id, payload.full_name.strip(), payload.email.lower(), hash_password(payload.password), payload.role, created_at),
+        (
+            user_id,
+            payload.full_name.strip(),
+            payload.email.lower(),
+            hash_password(payload.password),
+            payload.role,
+            created_at,
+        ),
     )
-    conn.commit(); conn.close()
-    write_audit(user_id, payload.full_name.strip(), payload.role, "USER_REGISTERED", "user", user_id, details=payload.email.lower())
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        user_id,
+        payload.full_name.strip(),
+        payload.role,
+        "USER_REGISTERED",
+        "user",
+        user_id,
+        details=payload.email.lower(),
+    )
     return {"success": True, "message": "User registered successfully", "user_id": user_id}
 
 
@@ -589,10 +799,19 @@ def login_user(payload: LoginRequest):
     conn = get_connection()
     user = conn.execute("SELECT * FROM users WHERE email = ?", (payload.email.lower(),)).fetchone()
     conn.close()
+
     if not user or not verify_password(payload.password, user["password_hash"]):
         return {"success": False, "message": "Invalid email or password"}
+
     token = create_session(user["id"], user["role"])
-    safe_user = {"id": user["id"], "full_name": user["full_name"], "email": user["email"], "role": user["role"], "created_at": user["created_at"]}
+    safe_user = {
+        "id": user["id"],
+        "full_name": user["full_name"],
+        "email": user["email"],
+        "role": user["role"],
+        "created_at": user["created_at"],
+    }
+
     write_audit(user["id"], user["full_name"], user["role"], "USER_LOGIN", "session", details="Session created")
     return {"success": True, "message": "Login successful", "user": safe_user, "token": token}
 
@@ -607,9 +826,12 @@ def logout(authorization: Optional[str] = Header(default=None)):
     token = extract_token(authorization)
     if not token:
         return {"success": False, "message": "Missing token"}
+
     conn = get_connection()
     deleted = conn.execute("DELETE FROM sessions WHERE token = ?", (token,)).rowcount
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
+
     return {"success": bool(deleted), "message": "Logged out" if deleted else "Session not found"}
 
 
@@ -629,30 +851,39 @@ async def create_complaint(
         raise HTTPException(status_code=403, detail="User mismatch")
 
     uploaded_file = evidence or screenshot
-    evidence_path = evidence_name = evidence_type = evidence_hash = ""
+    evidence_path = ""
+    evidence_name = ""
+    evidence_type = ""
+    evidence_hash = ""
     complaint_id = f"RK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
     if uploaded_file and uploaded_file.filename:
         _, ext = os.path.splitext(uploaded_file.filename.lower())
         if ext and ext not in ALLOWED_EXTENSIONS:
             raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
+
         content = await uploaded_file.read()
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise HTTPException(status_code=400, detail="File too large. Maximum size is 15 MB")
+
         evidence_name = uploaded_file.filename
         safe_name = f"{complaint_id}_{os.path.basename(uploaded_file.filename)}"
         evidence_path = os.path.join(UPLOAD_DIR, safe_name)
+
         with open(evidence_path, "wb") as out_file:
             out_file.write(content)
+
         evidence_type = uploaded_file.content_type or mimetypes.guess_type(uploaded_file.filename)[0] or "application/octet-stream"
         evidence_hash = compute_file_hash(evidence_path)
 
-    ai_result = calculate_risk(complaint_text, suspicious_url, evidence_name)
+    ai_result = build_hybrid_result(complaint_text, suspicious_url, evidence_name)
     linked_case_count = get_linked_case_count(suspicious_url, evidence_hash)
+
     if linked_case_count >= 1:
         ai_result["score"] = min(ai_result["score"] + 10, 100)
         ai_result["confidence"] = min(ai_result["confidence"] + 5, 99)
         ai_result["reason"] += f"\n\nCampaign Alert:\n• Linked indicator found in {linked_case_count} earlier case(s)."
+
         if ai_result["score"] >= 81:
             ai_result["level"] = "Critical"
             ai_result["status"] = "Escalated"
@@ -667,21 +898,60 @@ async def create_complaint(
             id, user_id, user_name, category, complaint_text, suspicious_url,
             screenshot_path, threat_type, risk_score, risk_level, ai_reason, mitigation,
             status, created_at, evidence_path, evidence_name, evidence_type,
-            evidence_hash, attack_channel, ai_confidence, linked_case_count
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            evidence_hash, attack_channel, ai_confidence, linked_case_count,
+            ml_prediction, model_used
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            complaint_id, user_id, user_name, category, complaint_text, suspicious_url,
-            evidence_path, ai_result["threat_type"], ai_result["score"], ai_result["level"], ai_result["reason"], ai_result["mitigation"],
-            ai_result["status"], created_at, evidence_path, evidence_name, evidence_type,
-            evidence_hash, attack_channel, ai_result["confidence"], linked_case_count,
+            complaint_id,
+            user_id,
+            user_name,
+            category,
+            complaint_text,
+            suspicious_url,
+            evidence_path,
+            ai_result["threat_type"],
+            ai_result["score"],
+            ai_result["level"],
+            ai_result["reason"],
+            ai_result["mitigation"],
+            ai_result["status"],
+            created_at,
+            evidence_path,
+            evidence_name,
+            evidence_type,
+            evidence_hash,
+            attack_channel,
+            ai_result["confidence"],
+            linked_case_count,
+            ai_result["ml_prediction"],
+            ai_result["model_used"],
         ),
     )
-    conn.commit(); conn.close()
+    conn.commit()
+    conn.close()
 
-    write_audit(user_id, user_name, current_user["role"], "COMPLAINT_CREATED", "complaint", complaint_id, details=f"Risk {ai_result['level']} / {ai_result['threat_type']}")
+    write_audit(
+        user_id,
+        user_name,
+        current_user["role"],
+        "COMPLAINT_CREATED",
+        "complaint",
+        complaint_id,
+        details=f"Risk {ai_result['level']} / {ai_result['threat_type']} / ML {ai_result['ml_prediction']}",
+    )
+
     if ai_result["status"] == "Escalated":
-        write_audit(user_id, user_name, current_user["role"], "AUTO_ESCALATED", "complaint", complaint_id, new_value="Escalated", details="Critical risk threshold met")
+        write_audit(
+            user_id,
+            user_name,
+            current_user["role"],
+            "AUTO_ESCALATED",
+            "complaint",
+            complaint_id,
+            new_value="Escalated",
+            details="Critical risk threshold met",
+        )
 
     return {
         "success": True,
@@ -696,6 +966,8 @@ async def create_complaint(
         "status": ai_result["status"],
         "linked_case_count": linked_case_count,
         "attack_channel": attack_channel,
+        "ml_prediction": ai_result["ml_prediction"],
+        "model_used": ai_result["model_used"],
     }
 
 
@@ -710,25 +982,36 @@ def get_my_complaints(user_id: str, authorization: Optional[str] = Header(defaul
     current_user = get_current_user(authorization)
     if current_user["id"] != user_id:
         raise HTTPException(status_code=403, detail="Access denied")
+
     conn = get_connection()
-    rows = conn.execute("SELECT * FROM complaints WHERE user_id = ? ORDER BY created_at DESC", (user_id,)).fetchall()
+    rows = conn.execute(
+        "SELECT * FROM complaints WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
+    ).fetchall()
     conn.close()
+
     return [dict(row) for row in rows]
 
 
 @app.get("/complaints/{complaint_id}/evidence-meta")
 def get_evidence_meta(complaint_id: str, authorization: Optional[str] = Header(default=None)):
     user = get_current_user(authorization)
+
     conn = get_connection()
     row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
     conn.close()
+
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
+
     row = dict(row)
+
     if user["role"] == "user" and row["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
+
     if not row.get("evidence_path"):
         return {"available": False}
+
     return {
         "available": True,
         "complaint_id": complaint_id,
@@ -741,39 +1024,64 @@ def get_evidence_meta(complaint_id: str, authorization: Optional[str] = Header(d
 @app.get("/complaints/{complaint_id}/evidence")
 def get_evidence_file(complaint_id: str, authorization: Optional[str] = Header(default=None)):
     user = get_current_user(authorization)
+
     conn = get_connection()
     row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
     conn.close()
+
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
+
     row = dict(row)
+
     if user["role"] == "user" and row["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
+
     if not row.get("evidence_path") or not os.path.exists(row["evidence_path"]):
         raise HTTPException(status_code=404, detail="Evidence file not found")
-    return FileResponse(path=row["evidence_path"], filename=row.get("evidence_name") or os.path.basename(row["evidence_path"]))
+
+    return FileResponse(
+        path=row["evidence_path"],
+        filename=row.get("evidence_name") or os.path.basename(row["evidence_path"]),
+    )
 
 
 @app.patch("/complaints/{complaint_id}/status")
 def update_status(complaint_id: str, payload: StatusUpdate, authorization: Optional[str] = Header(default=None)):
     actor = require_roles(authorization, ["admin", "cert"])
+
     conn = get_connection()
     old_row = conn.execute("SELECT status FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+
     if not old_row:
         conn.close()
         raise HTTPException(status_code=404, detail="Complaint not found")
+
     conn.execute("UPDATE complaints SET status = ? WHERE id = ?", (payload.status, complaint_id))
-    conn.commit(); conn.close()
-    write_audit(actor["id"], actor["full_name"], actor["role"], "STATUS_UPDATED", "complaint", complaint_id, old_value=old_row["status"], new_value=payload.status)
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        actor["id"],
+        actor["full_name"],
+        actor["role"],
+        "STATUS_UPDATED",
+        "complaint",
+        complaint_id,
+        old_value=old_row["status"],
+        new_value=payload.status,
+    )
     return {"success": True, "message": "Status updated successfully"}
 
 
 @app.get("/audit-logs")
 def get_audit_logs(limit: int = 50, authorization: Optional[str] = Header(default=None)):
     require_roles(authorization, ["admin", "cert"])
+
     conn = get_connection()
     rows = conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     conn.close()
+
     return [dict(row) for row in rows]
 
 
@@ -786,14 +1094,24 @@ def get_analytics(authorization: Optional[str] = Header(default=None)):
 @app.get("/admin/overview")
 def get_admin_overview(authorization: Optional[str] = Header(default=None)):
     actor = require_roles(authorization, ["admin"])
+
     complaints = get_all_complaints_data()
     analytics = build_analytics(complaints)
+
     conn = get_connection()
     audit_rows = [dict(row) for row in conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 20").fetchall()]
     users = [dict(row) for row in conn.execute("SELECT id, full_name, email, role, created_at FROM users ORDER BY created_at DESC").fetchall()]
     conn.close()
+
     write_audit(actor["id"], actor["full_name"], actor["role"], "ADMIN_OVERVIEW_VIEWED", "dashboard", details="Admin dashboard loaded")
-    return {"analytics": analytics, "complaints": complaints, "audit_logs": audit_rows, "users": users, "campaign_graph": build_campaign_graph(complaints)}
+
+    return {
+        "analytics": analytics,
+        "complaints": complaints,
+        "audit_logs": audit_rows,
+        "users": users,
+        "campaign_graph": build_campaign_graph(complaints),
+    }
 
 
 @app.get("/cert/live-alerts")
@@ -817,12 +1135,24 @@ def get_cert_summary(authorization: Optional[str] = Header(default=None)):
 @app.get("/cert/intel")
 def get_cert_intel(authorization: Optional[str] = Header(default=None)):
     actor = require_roles(authorization, ["cert", "admin"])
+
     complaints = get_all_complaints_data()
     analytics = build_analytics(complaints)
     summary = build_cert_intel(complaints)
-    repeated_cases = sorted([r for r in complaints if int(r.get("linked_case_count") or 0) > 0], key=lambda x: int(x.get("linked_case_count") or 0), reverse=True)[:10]
-    opsec_cases = [r for r in complaints if "OPSEC" in (r.get("threat_type") or "") or "Espionage" in (r.get("threat_type") or "")][:10]
+
+    repeated_cases = sorted(
+        [r for r in complaints if int(r.get("linked_case_count") or 0) > 0],
+        key=lambda x: int(x.get("linked_case_count") or 0),
+        reverse=True,
+    )[:10]
+
+    opsec_cases = [
+        r for r in complaints
+        if "OPSEC" in (r.get("threat_type") or "") or "Espionage" in (r.get("threat_type") or "")
+    ][:10]
+
     write_audit(actor["id"], actor["full_name"], actor["role"], "CERT_INTEL_VIEWED", "dashboard", details="CERT intel dashboard loaded")
+
     return {
         "analytics": analytics,
         "summary": summary,
@@ -840,22 +1170,45 @@ def get_cert_intel(authorization: Optional[str] = Header(default=None)):
 @app.get("/download/excel")
 def download_excel(authorization: Optional[str] = Header(default=None)):
     require_roles(authorization, ["admin", "cert"])
+
     conn = get_connection()
     df = pd.read_sql_query("SELECT * FROM complaints ORDER BY created_at DESC", conn)
     conn.close()
+
     file_name = os.path.join(BASE_DIR, "complaints_export.xlsx")
     df.to_excel(file_name, index=False)
-    return FileResponse(path=file_name, filename="complaints_export.xlsx", media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    return FileResponse(
+        path=file_name,
+        filename="complaints_export.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @app.put("/update-status/{case_id}")
 def update_status_simple(case_id: str, status: str, authorization: Optional[str] = Header(default=None)):
     actor = require_roles(authorization, ["admin", "cert"])
+
     conn = get_connection()
     old_row = conn.execute("SELECT status FROM complaints WHERE id = ?", (case_id,)).fetchone()
+
     if not old_row:
-        conn.close(); raise HTTPException(status_code=404, detail="Complaint not found")
+        conn.close()
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
     conn.execute("UPDATE complaints SET status = ? WHERE id = ?", (status, case_id))
-    conn.commit(); conn.close()
-    write_audit(actor["id"], actor["full_name"], actor["role"], "STATUS_UPDATED", "complaint", case_id, old_value=old_row["status"], new_value=status)
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        actor["id"],
+        actor["full_name"],
+        actor["role"],
+        "STATUS_UPDATED",
+        "complaint",
+        case_id,
+        old_value=old_row["status"],
+        new_value=status,
+    )
+
     return {"success": True, "message": "Status updated successfully"}
