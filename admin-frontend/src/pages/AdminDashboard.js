@@ -37,6 +37,7 @@ export default function AdminDashboard() {
   const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [riskFilter, setRiskFilter] = useState('All');
+  const [evidenceError, setEvidenceError] = useState('');
 
   const loadDashboardData = async () => {
     try {
@@ -60,6 +61,20 @@ export default function AdminDashboard() {
       if (!res.ok || !data.success) throw new Error(data.detail || data.message || 'Status update failed');
       loadDashboardData();
     } catch (err) { alert(err.message); }
+  };
+
+  const openEvidence = async (complaintId) => {
+    try {
+      setEvidenceError('');
+      const res = await fetch(`${API}/complaints/${complaintId}/evidence`, { headers: getAuthHeaders() });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } catch (err) {
+      setEvidenceError('Failed to open evidence: ' + err.message);
+    }
   };
 
   const filteredComplaints = useMemo(() => {
@@ -94,7 +109,8 @@ export default function AdminDashboard() {
 
       <div className="panel" style={{ marginTop: 22 }}>
         <div className="panel-header"><h2>Complaint Queue</h2><div style={{ display: 'flex', gap: 10 }}><select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} style={inputStyle}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}><option>All</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}</select></div></div>
-        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th></tr></thead><tbody>{filteredComplaints.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <a href={`${API}/complaints/${item.id}/evidence`} target="_blank" rel="noreferrer" className="text-link">Open</a> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th></tr></thead><tbody>{filteredComplaints.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <button onClick={() => openEvidence(item.id)} className="text-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Open</button> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td></tr>)}</tbody></table></div>
+        {evidenceError && <div style={{ color: '#fca5a5', marginTop: 8 }}>{evidenceError}</div>}
       </div>
 
       <div className="dashboard-grid" style={{ marginTop: 22 }}>
