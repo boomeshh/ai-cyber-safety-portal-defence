@@ -1,0 +1,154 @@
+.heatmap-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.heatmap-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #94a3b8;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Scroll is contained here — does NOT escape to the page */
+.heatmap-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: 6px;
+  /* Custom scrollbar — subtle dark style */
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+.heatmap-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.heatmap-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.heatmap-scroll::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 999px;
+}
+
+/* Grid expands as needed — scroll handles the overflow */
+.heatmap-grid {
+  display: grid;
+  gap: 3px;
+  /* min-width: max-content keeps cells from collapsing but stays inside scroll */
+  min-width: max-content;
+}
+
+.hm-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  border-radius: 4px;
+  min-height: 26px;
+  min-width: 26px;
+  transition: filter 0.15s;
+}
+
+.hm-corner {
+  background: transparent;
+}
+
+.hm-header {
+  color: #64748b;
+  font-weight: 700;
+  font-size: 0.68rem;
+  background: transparent;
+}
+
+.hm-x-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 32px;
+  /* Rotate long hour labels to save horizontal space */
+  writing-mode: horizontal-tb;
+}
+
+.hm-y-label {
+  justify-content: flex-end;
+  padding-right: 8px;
+  color: #94a3b8;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: transparent;
+  min-width: 80px;
+  max-width: 120px;
+}
+
+.hm-data {
+  cursor: default;
+  color: rgba(255, 255, 255, 0.85);
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.hm-data:hover {
+  filter: brightness(1.3);
+  z-index: 2;
+}
+
+.hm-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.hm-legend-item {
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hm-low {
+  color: #38bdf8;
+}
+
+.hm-high {
+  color: #dc2626;
+}
+
+.hm-legend-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(56,189,248,0.6), rgba(245,158,11,0.7), rgba(220,38,38,0.9));
+  max-width: 160px;
+}
+
+.hm-tooltip {
+  background: #0f172a;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 9999;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.heatmap-empty {
+  padding: 20px;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.9rem;
+  border: 1px dashed #1e293b;
+  border-radius: 12px;
+}

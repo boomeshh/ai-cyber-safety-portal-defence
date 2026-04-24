@@ -1,0 +1,38 @@
+{
+  "algorithm": "LogisticRegression",
+  "classes": [
+    "Espionage / OPSEC Risk",
+    "Honeytrap / Romance Manipulation",
+    "Identity / Financial Fraud",
+    "Malware / APK Threat",
+    "Phishing",
+    "Suspicious Communication",
+    "Unknown / Needs Review"
+  ],
+  "trained_at": "2026-04-24T17:27:10.606036",
+  "sample_count": 59,
+  "real_sample_count": 59,
+  "synthetic_sample_count": 0,
+  "synthetic_ratio": 0.0,
+  "feature_count": 464,
+  "training_accuracy": 0.6667,
+  "macro_precision": 0.4267,
+  "macro_recall": 0.56,
+  "macro_f1": 0.46,
+  "previous_accuracy": null,
+  "previous_macro_f1": null,
+  "accuracy_delta": null,
+  "macro_f1_delta": null,
+  "warning": null,
+  "class_distribution": {
+    "Phishing": 20,
+    "Suspicious Communication": 9,
+    "Espionage / OPSEC Risk": 6,
+    "Identity / Financial Fraud": 8,
+    "Honeytrap / Romance Manipulation": 5,
+    "Malware / APK Threat": 6,
+    "Unknown / Needs Review": 5
+  },
+  "trigger_reason": "auto",
+  "auto_retrain_enabled": true
+}

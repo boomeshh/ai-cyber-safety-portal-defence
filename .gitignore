@@ -1,24 +1,26 @@
-# Test files
-*.test.js
-*.spec.js
-
-# React testing
-src/setupTests.js
-src/reportWebVitals.js
+# Node
+node_modules/
 
 # Logs
 *.log
 
-# Node
-node_modules/
-
 # Python
 __pycache__/
 *.pyc
+*.pkl
 
-# DB & temp
+# Virtual Env
+.venv/
+venv/
+
+# DB
 *.db
+
+# Excel
 *.xlsx
 
-# Uploads
+# Uploads / Evidence
 uploads/
+
+# OS
+.DS_Store
