@@ -11,6 +11,13 @@ import hashlib
 import secrets
 import mimetypes
 
+# Load .env file if present (optional — does not crash if missing)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+except ImportError:
+    pass
+
 from ml_engine import (
     hybrid_analyze_complaint,
     train_threat_model,
@@ -21,8 +28,19 @@ from ml_engine import (
     AUTO_RETRAIN_ENABLED,
     MAX_SYNTHETIC_RATIO,
 )
+from integrations import send_high_risk_alert, check_url_threat_intel, dispatch_cert_alert
+from security_utils import (
+    SecurityHeadersMiddleware,
+    RateLimitMiddleware,
+    sanitize_text,
+    sanitize_url,
+)
 
 app = FastAPI(title="Rakshak AI - Hybrid ML Backend")
+
+# Security middleware — order matters: rate limit first, then headers
+app.add_middleware(RateLimitMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -999,7 +1017,27 @@ async def create_complaint(
         evidence_type = uploaded_file.content_type or mimetypes.guess_type(uploaded_file.filename)[0] or "application/octet-stream"
         evidence_hash = compute_file_hash(evidence_path)
 
+    # Sanitize inputs before analysis
+    complaint_text = sanitize_text(complaint_text)
+    suspicious_url = sanitize_url(suspicious_url)
+
+    # URL threat intelligence check (non-blocking, enriches indicators)
+    url_intel = {}
+    if suspicious_url:
+        try:
+            url_intel = check_url_threat_intel(suspicious_url)
+        except Exception:
+            url_intel = {}
+
     ai_result = build_hybrid_result(complaint_text, suspicious_url, evidence_name)
+
+    # Boost score if URL flagged as malicious by threat intel
+    if url_intel.get("is_malicious"):
+        ai_result["score"] = min(ai_result["score"] + 15, 100)
+        ai_result["reason"] += f"\n\nThreat Intel:\n• URL flagged: {url_intel.get('details', '')}"
+        if ai_result["score"] >= 81:
+            ai_result["level"] = "Critical"
+            ai_result["status"] = "Escalated"
     linked_case_count = get_linked_case_count(suspicious_url, evidence_hash)
 
     if linked_case_count >= 1:
@@ -1117,6 +1155,19 @@ async def create_complaint(
         threading.Thread(target=maybe_auto_retrain, daemon=True).start()
     except Exception:
         pass
+
+    # Send email alert for High/Critical cases (non-blocking background thread)
+    if ai_result["level"] in ("High", "Critical"):
+        try:
+            import threading
+            threading.Thread(
+                target=send_high_risk_alert,
+                args=(complaint_id, ai_result["level"], ai_result["threat_type"],
+                      user_name, int(ai_result["confidence"])),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
 
     return response
 
@@ -1607,3 +1658,118 @@ def download_excel(authorization: Optional[str] = Header(default=None)):
         filename="complaints_export.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /ai/metrics — model performance metrics (admin/cert)
+# ---------------------------------------------------------------------------
+
+@app.get("/ai/metrics")
+def get_ai_metrics(authorization: Optional[str] = Header(default=None)):
+    """
+    Return current model performance metrics.
+    Includes accuracy, precision, recall, F1, class distribution,
+    feedback count, synthetic ratio, and auto-retrain status.
+    """
+    require_roles(authorization, ["admin", "cert"])
+
+    info = load_model_info()
+    retrain = get_retrain_status()
+
+    return {
+        "model_exists":           info.get("model_exists", False),
+        "algorithm":              info.get("algorithm", "LogisticRegression"),
+        "trained_at":             info.get("trained_at"),
+        "sample_count":           info.get("sample_count"),
+        "real_sample_count":      info.get("real_sample_count"),
+        "synthetic_sample_count": info.get("synthetic_sample_count"),
+        "synthetic_ratio":        info.get("synthetic_ratio"),
+        "feature_count":          info.get("feature_count"),
+        "classes":                info.get("classes", []),
+        # Core metrics
+        "accuracy":               info.get("training_accuracy"),
+        "macro_precision":        info.get("macro_precision"),
+        "macro_recall":           info.get("macro_recall"),
+        "macro_f1":               info.get("macro_f1"),
+        # Comparison
+        "previous_accuracy":      info.get("previous_accuracy"),
+        "previous_macro_f1":      info.get("previous_macro_f1"),
+        "accuracy_delta":         info.get("accuracy_delta"),
+        "macro_f1_delta":         info.get("macro_f1_delta"),
+        # Distribution
+        "class_distribution":     info.get("class_distribution", {}),
+        "feedback_count":         info.get("feedback_count", 0),
+        # Status
+        "fallback_active":        info.get("fallback_active", True),
+        "auto_retrain_enabled":   retrain.get("auto_retrain_enabled"),
+        "model_age_hours":        retrain.get("model_age_hours"),
+        "complaints_since_last_train": retrain.get("complaints_since_last_train"),
+        "should_retrain_now":     retrain.get("should_retrain_now"),
+        "warning":                info.get("warning"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /cert/alert — dispatch a CERT alert for a complaint (cert/admin)
+# ---------------------------------------------------------------------------
+
+@app.post("/cert/alert")
+def trigger_cert_alert(complaint_id: str, authorization: Optional[str] = Header(default=None)):
+    """
+    Manually dispatch a CERT alert for a specific complaint.
+    Sends email alert and returns structured alert record.
+    """
+    actor = require_roles(authorization, ["cert", "admin"])
+
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    row = dict(row)
+    alert = dispatch_cert_alert(
+        complaint_id=complaint_id,
+        risk_level=row.get("risk_level", "Unknown"),
+        threat_type=row.get("threat_type", "Unknown"),
+        user_name=row.get("user_name", "Unknown"),
+        details=f"Manually triggered by {actor['full_name']} ({actor['role']})",
+    )
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "CERT_ALERT_DISPATCHED", "complaint", complaint_id,
+        details=f"Alert ID: {alert.get('alert_id')}",
+    )
+
+    return {"success": True, "alert": alert}
+
+
+# ---------------------------------------------------------------------------
+# GET /complaints/{complaint_id}/url-intel — URL threat intel for a complaint
+# ---------------------------------------------------------------------------
+
+@app.get("/complaints/{complaint_id}/url-intel")
+def get_url_intel(complaint_id: str, authorization: Optional[str] = Header(default=None)):
+    """
+    Run threat intelligence check on the URL attached to a complaint.
+    Returns heuristic + optional VirusTotal result.
+    """
+    require_roles(authorization, ["admin", "cert"])
+
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT suspicious_url FROM complaints WHERE id = ?", (complaint_id,)
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    url = (row["suspicious_url"] or "").strip()
+    if not url:
+        return {"complaint_id": complaint_id, "url": None, "result": {"is_malicious": False, "details": "No URL attached."}}
+
+    result = check_url_threat_intel(url)
+    return {"complaint_id": complaint_id, "url": url, "result": result}
