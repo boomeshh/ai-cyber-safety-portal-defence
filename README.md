@@ -45,9 +45,9 @@ User → Frontend (React) → Backend (FastAPI) → AI Engine → Database → D
 
 ## 📸 Screenshots
 
-![Login](screenshots/login.png)
-![Dashboard](screenshots/dashboard.png)
-![CERT](screenshots/cert.png)
+![Login](screenshots/USER.png)
+![Dashboard](screenshots/ADMIN.png)
+![CERT](screenshots/CERT.png)
 
 ---
 
