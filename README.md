@@ -67,6 +67,15 @@ User → Frontend (React) → Backend (FastAPI) → AI Engine → Database → D
 
 ---
 
+## 💡 Why This Project
+Most cyber incident reporting systems are slow and manual.
+
+Rakshak AI aims to automate threat analysis and reduce response time using AI-powered decision support.
+
+This project was built to explore real-world applications of AI in cybersecurity.
+
+---
+
 ## 🌍 Live Demo
 Frontend can be deployed on Vercel. Backend can be hosted on AWS EC2.
 
