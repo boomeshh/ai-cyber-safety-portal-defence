@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getAuthHeaders, getStoredUser, logoutUser } from '../utils/auth';
 
-const API = 'http://127.0.0.1:8000';
+const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 const statusOptions = ['Open', 'Under Review', 'Escalated', 'Action Initiated', 'Resolved', 'Archived'];
 
 function getRiskBadgeClass(level) {

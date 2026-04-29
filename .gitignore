@@ -1,3 +1,7 @@
+# Environment files — never commit real secrets
+**/.env
+backend/.env
+
 # Node
 node_modules/
 

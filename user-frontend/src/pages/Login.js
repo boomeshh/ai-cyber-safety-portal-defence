@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getStoredUser } from "../utils/auth";
 
+const API = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000";
+
 function Login() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
@@ -17,7 +19,7 @@ function Login() {
     setLoading(true);
 
     try {
-      const res = await fetch("https://ai-cyber-safety-portal-defence.onrender.com/login", {
+      const res = await fetch(`${API}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
