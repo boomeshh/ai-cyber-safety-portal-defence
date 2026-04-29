@@ -114,7 +114,7 @@ export default function App() {
       }
       const blob = await res.blob();
       const disposition = res.headers.get('content-disposition') || '';
-      const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^\";]+)"?/i);
+      const match = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
       const fileName = decodeURIComponent(match?.[1] || match?.[2] || 'complaints_export.xlsx');
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
