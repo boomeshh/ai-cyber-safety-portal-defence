@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthHeaders, getStoredUser } from "../utils/auth";
 
-const API = "http://127.0.0.1:8000";
+const API = "https://ai-cyber-safety-portal-defence.onrender.com";
 
 function getRiskBadgeClass(level) {
   switch (level) {

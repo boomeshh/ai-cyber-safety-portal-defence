@@ -32,7 +32,7 @@ function SubmitComplaint() {
         formData.append("evidence", form.evidence);
       }
 
-      const res = await fetch("http://127.0.0.1:8000/complaints", {
+      const res = await fetch("https://ai-cyber-safety-portal-defence.onrender.com/complaints", {
         method: "POST",
         headers: getAuthHeaders(),
         body: formData,
