@@ -1,4 +1,4 @@
-import React from "react";
+import { useState, useEffect, useMemo } from 'react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -21,7 +21,7 @@ ChartJS.register(
   LineElement, PointElement, Title, Tooltip, Legend, Filler
 );
 
-const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
+const API = process.env.REACT_APP_API_URL || process.env.REACT_APP_API_BASE_URL || 'https://ai-cyber-safety-portal-defence.onrender.com';
 
 function getRiskClass(level) {
   switch (level) {
