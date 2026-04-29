@@ -21,7 +21,7 @@ ChartJS.register(
   LineElement, PointElement, Title, Tooltip, Legend, Filler
 );
 
-const API = 'http://127.0.0.1:8000';
+const API = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
 
 function getRiskClass(level) {
   switch (level) {

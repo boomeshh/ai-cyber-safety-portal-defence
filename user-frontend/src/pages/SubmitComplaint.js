@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { getAuthHeaders, getStoredUser } from "../utils/auth";
 
+const API = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000";
+
 function SubmitComplaint() {
   const user = getStoredUser();
 
@@ -32,7 +34,7 @@ function SubmitComplaint() {
         formData.append("evidence", form.evidence);
       }
 
-      const res = await fetch("https://ai-cyber-safety-portal-defence.onrender.com/complaints", {
+      const res = await fetch(`${API}/complaints`, {
         method: "POST",
         headers: getAuthHeaders(),
         body: formData,
