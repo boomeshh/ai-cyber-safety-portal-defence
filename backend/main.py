@@ -45,6 +45,12 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Production
+        "https://rakshakai.online",
+        "https://www.rakshakai.online",
+        "https://admin.rakshakai.online",
+        "https://cert.rakshakai.online",
+        # Local development
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:3002",
