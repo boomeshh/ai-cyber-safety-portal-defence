@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const API = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000";
+const API = process.env.REACT_APP_API_BASE_URL || "https://ai-cyber-safety-portal-defence.onrender.com";
 
 function Register() {
   const [form, setForm] = useState({ full_name: "", email: "", password: "" });
