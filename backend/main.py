@@ -35,6 +35,7 @@ from security_utils import (
     sanitize_text,
     sanitize_url,
 )
+from seed_data import seed_complaints
 
 app = FastAPI(title="Rakshak AI - Hybrid ML Backend")
 
@@ -882,6 +883,7 @@ def build_campaign_clusters(rows: list[dict]) -> list[dict]:
 
 
 init_db()
+seed_complaints(DB_NAME)
 
 
 # ---------------- Request Models ----------------
