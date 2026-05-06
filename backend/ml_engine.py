@@ -425,11 +425,27 @@ def train_threat_model(
         else:
             model.fit(X, all_labels)
 
-        # Save artifacts
-        with open(MODEL_PATH, "wb") as f:
-            pickle.dump(model, f)
-        with open(VECTORIZER_PATH, "wb") as f:
-            pickle.dump(vectorizer, f)
+        # Save artifacts — only replace if new model is not worse than previous
+        _model_replaced = True
+        if (
+            training_accuracy is not None
+            and prev_accuracy is not None
+            and training_accuracy < prev_accuracy - 0.02  # allow 2% tolerance
+        ):
+            logger.warning(
+                f"[ml_engine] New accuracy {training_accuracy:.4f} is worse than previous "
+                f"{prev_accuracy:.4f}. Keeping existing model."
+            )
+            warnings_list.append(
+                f"Model NOT replaced: new accuracy ({training_accuracy:.3f}) is worse than "
+                f"previous ({prev_accuracy:.3f}). Existing model preserved."
+            )
+            _model_replaced = False
+        else:
+            with open(MODEL_PATH, "wb") as f:
+                pickle.dump(model, f)
+            with open(VECTORIZER_PATH, "wb") as f:
+                pickle.dump(vectorizer, f)
 
         classes = sorted(set(all_labels))
         warning_str = " | ".join(warnings_list) if warnings_list else None
@@ -463,6 +479,7 @@ def train_threat_model(
             "class_distribution":    dict(dist),
             "trigger_reason":        trigger_reason,
             "auto_retrain_enabled":  AUTO_RETRAIN_ENABLED,
+            "model_replaced":        _model_replaced,
         }
         with open(META_PATH, "w") as f:
             json.dump(meta, f, indent=2)
