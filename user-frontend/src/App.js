@@ -6,6 +6,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import SubmitComplaint from "./pages/SubmitComplaint";
 import MyComplaints from "./pages/MyComplaints";
+import PublicAwareness from "./pages/PublicAwareness";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/submit" element={<SubmitComplaint />} />
         <Route path="/my-complaints" element={<MyComplaints />} />
+        <Route path="/awareness" element={<PublicAwareness />} />
       </Routes>
     </Router>
   );

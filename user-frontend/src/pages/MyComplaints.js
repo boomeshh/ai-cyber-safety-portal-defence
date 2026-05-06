@@ -196,6 +196,43 @@ function MyComplaints() {
                     <p>{item.mitigation}</p>
                   </div>
 
+                  {/* Phase B — Mitigation Steps Card */}
+                  {Array.isArray(item.mitigation_steps) && item.mitigation_steps.length > 0 ? (
+                    <div className="complaint-section" style={{ background: '#0f2a1a', border: '1px solid #166534', borderRadius: 10, padding: '12px 16px' }}>
+                      <strong style={{ color: '#4ade80' }}>✅ Mitigation Steps</strong>
+                      <ol style={{ marginTop: 8, paddingLeft: 18, color: '#86efac', fontSize: 13 }}>
+                        {item.mitigation_steps.map((step, i) => <li key={i} style={{ marginBottom: 4 }}>{step}</li>)}
+                      </ol>
+                    </div>
+                  ) : null}
+
+                  {/* Phase B — Severity Explanation Card */}
+                  {item.severity_explanation ? (
+                    <div className="complaint-section" style={{ background: '#1e1a0f', border: '1px solid #854d0e', borderRadius: 10, padding: '12px 16px' }}>
+                      <strong style={{ color: '#fbbf24' }}>⚠ Why this risk level?</strong>
+                      <p style={{ color: '#fde68a', fontSize: 13, marginTop: 6 }}>{item.severity_explanation.summary}</p>
+                      <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>
+                        Score: {item.severity_explanation.risk_score} ({item.severity_explanation.score_band}) · AI Confidence: {item.severity_explanation.ai_confidence_pct}%
+                      </p>
+                      {item.severity_explanation.top_indicators?.length > 0 ? (
+                        <ul style={{ marginTop: 6, paddingLeft: 16, color: '#fcd34d', fontSize: 12 }}>
+                          {item.severity_explanation.top_indicators.map((ind, i) => <li key={i}>{ind}</li>)}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {/* Phase B — IOC Panel */}
+                  {item.ioc && (item.ioc.urls?.length > 0 || item.ioc.emails?.length > 0 || item.ioc.phones?.length > 0 || item.ioc.domains?.length > 0) ? (
+                    <div className="complaint-section" style={{ background: '#1a0f1e', border: '1px solid #6b21a8', borderRadius: 10, padding: '12px 16px' }}>
+                      <strong style={{ color: '#c084fc' }}>🔍 Extracted IOCs</strong>
+                      {item.ioc.urls?.length > 0 ? <div style={{ marginTop: 6 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>URLs: </span>{item.ioc.urls.map((u, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6, wordBreak: 'break-all' }}>{u}</span>)}</div> : null}
+                      {item.ioc.domains?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Domains: </span>{item.ioc.domains.map((d, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{d}</span>)}</div> : null}
+                      {item.ioc.emails?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Emails: </span>{item.ioc.emails.map((e, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{e}</span>)}</div> : null}
+                      {item.ioc.phones?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Phones: </span>{item.ioc.phones.map((p, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{p}</span>)}</div> : null}
+                    </div>
+                  ) : null}
+
                   <div className="complaint-section">
                     <EvidencePreview complaintId={item.id} />
                   </div>

@@ -2402,3 +2402,182 @@ def get_ai_feedback(
     conn.close()
 
     return [dict(row) for row in rows]
+
+
+# ===========================================================================
+# Phase D — Public Awareness Dashboard (no PII)
+# ===========================================================================
+
+@app.get("/public/awareness")
+def public_awareness():
+    """
+    Public endpoint — returns anonymized aggregate statistics only.
+    No names, complaint text, evidence, phone numbers, or PII.
+    Safe for embedding in a public-facing awareness page.
+    """
+    conn = get_connection()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT risk_level, threat_type, attack_channel, status, created_at FROM complaints"
+    ).fetchall()]
+    conn.close()
+
+    total = len(rows)
+    risk_dist = {}
+    threat_dist = {}
+    channel_dist = {}
+    status_dist = {}
+    daily_trend = {}
+
+    for r in rows:
+        rl = r.get("risk_level") or "Unknown"
+        risk_dist[rl] = risk_dist.get(rl, 0) + 1
+
+        for t in (r.get("threat_type") or "Unknown").split(" | "):
+            t = t.strip() or "Unknown"
+            threat_dist[t] = threat_dist.get(t, 0) + 1
+
+        ch = r.get("attack_channel") or "Unknown"
+        channel_dist[ch] = channel_dist.get(ch, 0) + 1
+
+        st = r.get("status") or "Unknown"
+        status_dist[st] = status_dist.get(st, 0) + 1
+
+        date = (r.get("created_at") or "")[:10]
+        if date:
+            daily_trend[date] = daily_trend.get(date, 0) + 1
+
+    top_threats = sorted(threat_dist.items(), key=lambda x: x[1], reverse=True)[:5]
+    top_channels = sorted(channel_dist.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    return {
+        "total_reports": total,
+        "risk_distribution": risk_dist,
+        "top_threat_types": [{"type": k, "count": v} for k, v in top_threats],
+        "top_channels": [{"channel": k, "count": v} for k, v in top_channels],
+        "status_distribution": status_dist,
+        "recent_trend": dict(sorted(daily_trend.items())[-14:]),
+        "note": "All data is anonymized. No personal information is included.",
+    }
+
+
+# ===========================================================================
+# Phase E — HTML Incident Report (admin/cert only)
+# ===========================================================================
+
+@app.get("/admin/complaints/{complaint_id}/report")
+def get_incident_report(
+    complaint_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Admin or CERT: generate an HTML incident report for a complaint.
+    Includes: ID, risk, threat, IOC summary, severity explanation,
+    mitigation steps, timeline, evidence metadata.
+    Does NOT include raw evidence files or complaint text PII.
+    """
+    actor = require_roles(authorization, ["admin", "cert"])
+
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    row = dict(row)
+
+    import json as _json
+    ev_ind = {}
+    try:
+        ev_ind = _json.loads(row.get("evidence_indicators") or "{}")
+    except Exception:
+        pass
+
+    mitigation = build_mitigation_steps(row.get("threat_type", ""), row.get("risk_level", "Low"))
+    severity = build_severity_explanation(
+        row.get("risk_level", "Low"),
+        int(row.get("risk_score") or 0),
+        int(row.get("ai_confidence") or 0),
+        row.get("threat_type", ""),
+        ev_ind.get("urls", []),
+    )
+    ioc = extract_ioc(row.get("complaint_text", ""), row.get("suspicious_url", ""))
+    timeline = build_complaint_timeline(complaint_id)
+
+    mit_html = "".join(f"<li>{s}</li>" for s in mitigation)
+    ioc_html = ""
+    if ioc["urls"]:
+        ioc_html += f"<p><strong>URLs:</strong> {', '.join(ioc['urls'])}</p>"
+    if ioc["domains"]:
+        ioc_html += f"<p><strong>Domains:</strong> {', '.join(ioc['domains'])}</p>"
+    if ioc["emails"]:
+        ioc_html += f"<p><strong>Emails:</strong> {', '.join(ioc['emails'])}</p>"
+    if ioc["phones"]:
+        ioc_html += f"<p><strong>Phones:</strong> {', '.join(ioc['phones'])}</p>"
+
+    tl_html = "".join(
+        f"<tr><td>{e['event']}</td><td>{e['description']}</td><td>{e['actor']}</td><td>{e['created_at']}</td></tr>"
+        for e in timeline
+    )
+
+    risk_color = {"Critical": "#ef4444", "High": "#f97316", "Medium": "#eab308", "Low": "#22c55e"}.get(
+        row.get("risk_level", "Low"), "#94a3b8"
+    )
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Incident Report — {complaint_id}</title>
+<style>
+  body {{ font-family: Arial, sans-serif; background: #f8fafc; color: #1e293b; padding: 32px; max-width: 900px; margin: 0 auto; }}
+  h1 {{ color: #0f172a; }} h2 {{ color: #1e40af; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; }}
+  .badge {{ display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: 700; color: white; background: {risk_color}; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+  th, td {{ border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; font-size: 13px; }}
+  th {{ background: #f1f5f9; }} ol {{ padding-left: 20px; }} li {{ margin-bottom: 4px; }}
+  .meta {{ background: #f1f5f9; border-radius: 8px; padding: 16px; margin-bottom: 20px; }}
+  .footer {{ color: #94a3b8; font-size: 12px; margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 12px; }}
+</style>
+</head>
+<body>
+<h1>Rakshak AI — Incident Report</h1>
+<div class="meta">
+  <p><strong>Complaint ID:</strong> {complaint_id}</p>
+  <p><strong>Risk Level:</strong> <span class="badge">{row.get('risk_level', 'Unknown')}</span></p>
+  <p><strong>Risk Score:</strong> {row.get('risk_score', 0)} / 100</p>
+  <p><strong>Threat Type:</strong> {row.get('threat_type', 'Unknown')}</p>
+  <p><strong>AI Confidence:</strong> {row.get('ai_confidence', 0)}%</p>
+  <p><strong>Attack Channel:</strong> {row.get('attack_channel', 'Unknown')}</p>
+  <p><strong>Status:</strong> {row.get('status', 'Unknown')}</p>
+  <p><strong>Category:</strong> {row.get('category', 'Unknown')}</p>
+  <p><strong>Reported At:</strong> {row.get('created_at', '')}</p>
+  <p><strong>Evidence:</strong> {row.get('evidence_name') or 'None attached'}</p>
+</div>
+
+<h2>Severity Explanation</h2>
+<p>{severity['summary']}</p>
+<p><em>Score band: {severity['score_band']} · {severity['note']}</em></p>
+
+<h2>Indicators of Compromise (IOC)</h2>
+{ioc_html if ioc_html else '<p>No IOCs extracted.</p>'}
+
+<h2>Mitigation Steps</h2>
+<ol>{mit_html}</ol>
+
+<h2>Case Timeline</h2>
+<table><thead><tr><th>Event</th><th>Description</th><th>Actor</th><th>Time</th></tr></thead>
+<tbody>{tl_html}</tbody></table>
+
+<div class="footer">
+  Generated by Rakshak AI · {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} · Accessed by {actor['full_name']} ({actor['role']})
+  <br>CONFIDENTIAL — For internal use only. Do not distribute.
+</div>
+</body></html>"""
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "REPORT_EXPORTED", "complaint", complaint_id,
+        details="HTML incident report generated",
+    )
+
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(content=html, status_code=200)

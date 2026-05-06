@@ -13,6 +13,179 @@ function getRiskBadgeClass(level) {
   }
 }
 
+// ─── Phase A: Complaint Detail Panel ────────────────────────────────────────
+function ComplaintDetailPanel({ item, onClose }) {
+  const [tab, setTab] = useState('timeline');
+  const [timeline, setTimeline] = useState(null);
+  const [notes, setNotes] = useState([]);
+  const [newNote, setNewNote] = useState('');
+  const [feedback, setFeedback] = useState([]);
+  const [verdict, setVerdict] = useState('correct');
+  const [comment, setComment] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    if (tab === 'timeline' && !timeline) {
+      fetch(`${API}/admin/complaints/${item.id}/timeline`, { headers: getAuthHeaders() })
+        .then(r => r.json()).then(d => setTimeline(d.timeline || [])).catch(() => setTimeline([]));
+    }
+    if (tab === 'notes') {
+      fetch(`${API}/admin/complaints/${item.id}/notes`, { headers: getAuthHeaders() })
+        .then(r => r.json()).then(d => setNotes(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+    if (tab === 'feedback') {
+      fetch(`${API}/admin/complaints/${item.id}/feedback`, { headers: getAuthHeaders() })
+        .then(r => r.json()).then(d => setFeedback(Array.isArray(d) ? d : [])).catch(() => {});
+    }
+  }, [tab, item.id, timeline]);
+
+  const addNote = async () => {
+    if (!newNote.trim()) return;
+    setSaving(true); setMsg('');
+    try {
+      const res = await fetch(`${API}/admin/complaints/${item.id}/notes`, {
+        method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: newNote.trim() }),
+      });
+      const d = await res.json();
+      if (d.success) { setNotes(prev => [...prev, d]); setNewNote(''); setMsg('Note saved.'); }
+    } catch { setMsg('Failed to save note.'); } finally { setSaving(false); }
+  };
+
+  const addFeedback = async () => {
+    setSaving(true); setMsg('');
+    try {
+      const res = await fetch(`${API}/admin/complaints/${item.id}/feedback`, {
+        method: 'POST', headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verdict, comment: comment || null }),
+      });
+      const d = await res.json();
+      if (d.success) { setFeedback(prev => [...prev, d]); setComment(''); setMsg('Feedback recorded.'); }
+    } catch { setMsg('Failed to save feedback.'); } finally { setSaving(false); }
+  };
+
+  const tabStyle = (t) => ({
+    padding: '6px 14px', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    background: tab === t ? '#1e40af' : '#1e293b', color: tab === t ? '#fff' : '#94a3b8', border: 'none',
+  });
+
+  return (
+    <div style={{ background: '#0b1220', border: '1px solid #1e293b', borderRadius: 14, padding: 20, marginTop: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <strong style={{ color: '#e2e8f0' }}>Case Detail: {item.id}</strong>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 18 }}>✕</button>
+      </div>
+
+      {/* Phase B — Severity Explanation */}
+      {item.severity_explanation ? (
+        <div style={{ background: '#1e1a0f', border: '1px solid #854d0e', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ color: '#fbbf24', fontWeight: 700, fontSize: 13 }}>⚠ Why this risk level?</div>
+          <div style={{ color: '#fde68a', fontSize: 13, marginTop: 4 }}>{item.severity_explanation.summary}</div>
+          <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}>Score: {item.severity_explanation.risk_score} ({item.severity_explanation.score_band}) · Confidence: {item.severity_explanation.ai_confidence_pct}%</div>
+        </div>
+      ) : null}
+
+      {/* Phase B — IOC Panel */}
+      {item.ioc && (item.ioc.urls?.length > 0 || item.ioc.emails?.length > 0 || item.ioc.phones?.length > 0) ? (
+        <div style={{ background: '#1a0f1e', border: '1px solid #6b21a8', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ color: '#c084fc', fontWeight: 700, fontSize: 13 }}>🔍 Extracted IOCs</div>
+          {item.ioc.urls?.length > 0 ? <div style={{ marginTop: 4, fontSize: 12, color: '#a78bfa' }}>URLs: {item.ioc.urls.join(', ')}</div> : null}
+          {item.ioc.emails?.length > 0 ? <div style={{ marginTop: 2, fontSize: 12, color: '#a78bfa' }}>Emails: {item.ioc.emails.join(', ')}</div> : null}
+          {item.ioc.phones?.length > 0 ? <div style={{ marginTop: 2, fontSize: 12, color: '#a78bfa' }}>Phones: {item.ioc.phones.join(', ')}</div> : null}
+        </div>
+      ) : null}
+
+      {/* Phase B — Mitigation Steps */}
+      {Array.isArray(item.mitigation_steps) && item.mitigation_steps.length > 0 ? (
+        <div style={{ background: '#0f2a1a', border: '1px solid #166534', borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+          <div style={{ color: '#4ade80', fontWeight: 700, fontSize: 13 }}>✅ Mitigation Steps</div>
+          <ol style={{ marginTop: 6, paddingLeft: 18, color: '#86efac', fontSize: 12 }}>
+            {item.mitigation_steps.map((s, i) => <li key={i} style={{ marginBottom: 3 }}>{s}</li>)}
+          </ol>
+        </div>
+      ) : null}
+
+      {/* Phase A — Tabs */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        <button style={tabStyle('timeline')} onClick={() => setTab('timeline')}>Timeline</button>
+        <button style={tabStyle('notes')} onClick={() => setTab('notes')}>Notes</button>
+        <button style={tabStyle('feedback')} onClick={() => setTab('feedback')}>AI Feedback</button>
+      </div>
+
+      {msg ? <div style={{ color: '#4ade80', fontSize: 13, marginBottom: 8 }}>{msg}</div> : null}
+
+      {tab === 'timeline' && (
+        <div>
+          {!timeline ? <div style={{ color: '#94a3b8', fontSize: 13 }}>Loading...</div> :
+            timeline.length === 0 ? <div style={{ color: '#94a3b8', fontSize: 13 }}>No timeline events.</div> :
+            <div style={{ position: 'relative', paddingLeft: 20 }}>
+              {timeline.map((ev, i) => (
+                <div key={i} style={{ marginBottom: 12, position: 'relative' }}>
+                  <div style={{ position: 'absolute', left: -14, top: 4, width: 8, height: 8, borderRadius: '50%', background: '#38bdf8' }} />
+                  <div style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 13 }}>{ev.event}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 12 }}>{ev.description}</div>
+                  <div style={{ color: '#475569', fontSize: 11 }}>{ev.actor} · {ev.created_at}</div>
+                </div>
+              ))}
+            </div>
+          }
+        </div>
+      )}
+
+      {tab === 'notes' && (
+        <div>
+          <div style={{ marginBottom: 10 }}>
+            {notes.length === 0 ? <div style={{ color: '#94a3b8', fontSize: 13 }}>No notes yet.</div> :
+              notes.map((n, i) => (
+                <div key={i} style={{ background: '#1e293b', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+                  <div style={{ color: '#e2e8f0', fontSize: 13 }}>{n.note}</div>
+                  <div style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>{n.actor_name} ({n.actor_role}) · {n.created_at}</div>
+                </div>
+              ))
+            }
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={newNote} onChange={e => setNewNote(e.target.value)} placeholder="Add internal note..."
+              style={{ flex: 1, background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 8, padding: '8px 12px', fontSize: 13 }} />
+            <button onClick={addNote} disabled={saving} style={{ ...buttonStyle, padding: '8px 14px', fontSize: 13 }}>
+              {saving ? '...' : 'Add'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tab === 'feedback' && (
+        <div>
+          <div style={{ marginBottom: 10 }}>
+            {feedback.length === 0 ? <div style={{ color: '#94a3b8', fontSize: 13 }}>No feedback yet.</div> :
+              feedback.map((f, i) => (
+                <div key={i} style={{ background: '#1e293b', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+                  <div style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{f.verdict}</div>
+                  {f.comment ? <div style={{ color: '#94a3b8', fontSize: 12 }}>{f.comment}</div> : null}
+                  <div style={{ color: '#475569', fontSize: 11, marginTop: 4 }}>{f.actor_name} · {f.created_at}</div>
+                </div>
+              ))
+            }
+          </div>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <select value={verdict} onChange={e => setVerdict(e.target.value)} style={inputStyle}>
+              <option value="correct">Correct</option>
+              <option value="wrong_classification">Wrong Classification</option>
+              <option value="needs_review">Needs Review</option>
+            </select>
+            <input value={comment} onChange={e => setComment(e.target.value)} placeholder="Optional comment..."
+              style={{ background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 8, padding: '8px 12px', fontSize: 13 }} />
+            <button onClick={addFeedback} disabled={saving} style={{ ...buttonStyle, padding: '8px 14px', fontSize: 13 }}>
+              {saving ? 'Saving...' : 'Submit Feedback'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LoginGate({ onLogin }) {
   const [email, setEmail] = useState('admin@rakshak.ai');
   const [password, setPassword] = useState('admin123');
@@ -38,6 +211,7 @@ export default function AdminDashboard() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [riskFilter, setRiskFilter] = useState('All');
   const [evidenceError, setEvidenceError] = useState('');
+  const [expandedId, setExpandedId] = useState(null);
 
   const loadDashboardData = async () => {
     try {
@@ -109,7 +283,15 @@ export default function AdminDashboard() {
 
       <div className="panel" style={{ marginTop: 22 }}>
         <div className="panel-header"><h2>Complaint Queue</h2><div style={{ display: 'flex', gap: 10 }}><select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} style={inputStyle}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}><option>All</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}</select></div></div>
-        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th></tr></thead><tbody>{filteredComplaints.map((item) => <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <button onClick={() => openEvidence(item.id)} className="text-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Open</button> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td></tr>)}</tbody></table></div>
+        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th><th>Detail</th></tr></thead><tbody>{filteredComplaints.map((item) => (<>
+          <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <button onClick={() => openEvidence(item.id)} className="text-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Open</button> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td>
+          <td><button onClick={() => setExpandedId(expandedId === item.id ? null : item.id)} style={{ background: 'none', border: '1px solid #334155', borderRadius: 6, color: '#94a3b8', cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}>{expandedId === item.id ? '▲' : '▼'}</button></td></tr>
+          {expandedId === item.id ? (
+            <tr key={`${item.id}-detail`}><td colSpan={10} style={{ padding: '0 8px 12px' }}>
+              <ComplaintDetailPanel item={item} onClose={() => setExpandedId(null)} />
+            </td></tr>
+          ) : null}
+        </>))}</tbody></table></div>
         {evidenceError && <div style={{ color: '#fca5a5', marginTop: 8 }}>{evidenceError}</div>}
       </div>
 
