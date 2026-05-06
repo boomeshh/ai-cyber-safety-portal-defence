@@ -291,6 +291,33 @@ def init_db():
         )
     """)
 
+    # Phase 2 — case notes (internal, admin/cert only)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS case_notes (
+            id TEXT PRIMARY KEY,
+            complaint_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            actor_name TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            note TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    # Phase 2 — AI classification feedback (verdict, not ML retrain)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ai_feedback (
+            id TEXT PRIMARY KEY,
+            complaint_id TEXT NOT NULL,
+            actor_id TEXT NOT NULL,
+            actor_name TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            comment TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
 
     demo_accounts = [
@@ -2074,3 +2101,304 @@ def test_email_alert(authorization: Optional[str] = Header(default=None)):
             else "No alert sent — both Resend and SMTP are disabled or misconfigured."
         ),
     }
+
+
+# ===========================================================================
+# Phase 2 — Case Notes, Timeline, AI Feedback
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Request models
+# ---------------------------------------------------------------------------
+
+class CaseNoteRequest(BaseModel):
+    note: str
+
+
+class AIFeedbackRequest(BaseModel):
+    verdict: str          # "correct" | "wrong_classification" | "needs_review"
+    comment: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Helper — build timeline for a complaint
+# ---------------------------------------------------------------------------
+
+def build_complaint_timeline(complaint_id: str) -> list[dict]:
+    """
+    Build a read-only timeline for a complaint from:
+    - The complaint row itself (reported, AI analyzed, auto-escalated)
+    - Audit log entries for this complaint
+    Returns events sorted oldest-first.
+    """
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    audit_rows = conn.execute(
+        "SELECT * FROM audit_logs WHERE target_id = ? ORDER BY created_at ASC",
+        (complaint_id,),
+    ).fetchall()
+    conn.close()
+
+    if not row:
+        return []
+
+    row = dict(row)
+    events: list[dict] = []
+
+    # 1. Reported
+    events.append({
+        "event": "Reported",
+        "description": f"Complaint submitted by {row.get('user_name', 'user')}.",
+        "actor": row.get("user_name", "user"),
+        "role": "user",
+        "created_at": row.get("created_at", ""),
+    })
+
+    # 2. AI analyzed
+    events.append({
+        "event": "AI Analyzed",
+        "description": (
+            f"Hybrid ML engine classified as {row.get('threat_type', 'Unknown')} "
+            f"with risk level {row.get('risk_level', 'Unknown')} "
+            f"(score {row.get('risk_score', 0)}, confidence {row.get('ai_confidence', 0)}%)."
+        ),
+        "actor": "Rakshak AI",
+        "role": "system",
+        "created_at": row.get("created_at", ""),
+    })
+
+    # 3. Auto-escalated if applicable
+    if row.get("status") == "Escalated" or row.get("risk_level") in ("High", "Critical"):
+        events.append({
+            "event": "Auto Escalated",
+            "description": (
+                f"Case automatically escalated due to {row.get('risk_level', '')} risk threshold."
+            ),
+            "actor": "Rakshak AI",
+            "role": "system",
+            "created_at": row.get("created_at", ""),
+        })
+
+    # 4. Events from audit log
+    action_map = {
+        "STATUS_UPDATED":       ("Status Updated",       "Status changed"),
+        "ADMIN_OVERVIEW_VIEWED":("Admin Reviewed",       "Admin viewed the dashboard"),
+        "CERT_INTEL_VIEWED":    ("CERT Reviewed",        "CERT officer viewed intel dashboard"),
+        "EVIDENCE_DOWNLOADED":  ("Evidence Downloaded",  "Evidence file accessed"),
+        "EVIDENCE_META_VIEWED": ("Evidence Viewed",      "Evidence metadata accessed"),
+        "NOTE_ADDED":           ("Note Added",           "Internal note added"),
+        "FEEDBACK_ADDED":       ("Feedback Recorded",    "AI classification feedback recorded"),
+        "AUTO_ESCALATED":       ("Auto Escalated",       "Critical risk threshold met"),
+        "CERT_ALERT_DISPATCHED":("CERT Alert Dispatched","CERT alert sent"),
+    }
+
+    for log in audit_rows:
+        log = dict(log)
+        action = log.get("action", "")
+        label, default_desc = action_map.get(action, (action.replace("_", " ").title(), ""))
+
+        desc = default_desc
+        if action == "STATUS_UPDATED":
+            desc = f"Status changed from '{log.get('old_value', '?')}' to '{log.get('new_value', '?')}'."
+        elif log.get("details"):
+            desc = log["details"]
+
+        events.append({
+            "event": label,
+            "description": desc,
+            "actor": log.get("actor_name") or "system",
+            "role": log.get("actor_role") or "system",
+            "created_at": log.get("created_at", ""),
+        })
+
+    # Sort by created_at ascending
+    events.sort(key=lambda e: e.get("created_at") or "")
+    return events
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/complaints/{complaint_id}/notes
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/complaints/{complaint_id}/notes")
+def add_case_note(
+    complaint_id: str,
+    payload: CaseNoteRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Admin or CERT: add an internal note to a complaint."""
+    actor = require_roles(authorization, ["admin", "cert"])
+
+    if not payload.note or not payload.note.strip():
+        raise HTTPException(status_code=400, detail="Note cannot be empty")
+
+    conn = get_connection()
+    exists = conn.execute("SELECT id FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    note_id = f"NOTE-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute(
+        """INSERT INTO case_notes (id, complaint_id, actor_id, actor_name, actor_role, note, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (note_id, complaint_id, actor["id"], actor["full_name"], actor["role"],
+         payload.note.strip(), created_at),
+    )
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "NOTE_ADDED", "complaint", complaint_id,
+        details=f"Note added: {payload.note.strip()[:80]}",
+    )
+
+    return {
+        "success": True,
+        "note_id": note_id,
+        "complaint_id": complaint_id,
+        "actor": actor["full_name"],
+        "role": actor["role"],
+        "note": payload.note.strip(),
+        "created_at": created_at,
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/complaints/{complaint_id}/notes
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/complaints/{complaint_id}/notes")
+def get_case_notes(
+    complaint_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Admin or CERT: retrieve all internal notes for a complaint."""
+    require_roles(authorization, ["admin", "cert"])
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM case_notes WHERE complaint_id = ? ORDER BY created_at ASC",
+        (complaint_id,),
+    ).fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/complaints/{complaint_id}/timeline
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/complaints/{complaint_id}/timeline")
+def get_complaint_timeline(
+    complaint_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Admin or CERT: retrieve the full event timeline for a complaint."""
+    actor = require_roles(authorization, ["admin", "cert"])
+
+    conn = get_connection()
+    exists = conn.execute("SELECT id FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    conn.close()
+
+    if not exists:
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "TIMELINE_VIEWED", "complaint", complaint_id,
+        details="Case timeline accessed",
+    )
+
+    return {
+        "complaint_id": complaint_id,
+        "timeline": build_complaint_timeline(complaint_id),
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/complaints/{complaint_id}/feedback
+# ---------------------------------------------------------------------------
+
+VALID_VERDICTS = {"correct", "wrong_classification", "needs_review"}
+
+
+@app.post("/admin/complaints/{complaint_id}/feedback")
+def add_ai_feedback(
+    complaint_id: str,
+    payload: AIFeedbackRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    """
+    Admin or CERT: record a verdict on the AI classification.
+    Does NOT retrain the model or change the stored ML prediction.
+    """
+    actor = require_roles(authorization, ["admin", "cert"])
+
+    if payload.verdict not in VALID_VERDICTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid verdict. Must be one of: {', '.join(sorted(VALID_VERDICTS))}",
+        )
+
+    conn = get_connection()
+    exists = conn.execute("SELECT id FROM complaints WHERE id = ?", (complaint_id,)).fetchone()
+    if not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Complaint not found")
+
+    feedback_id = f"FB-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn.execute(
+        """INSERT INTO ai_feedback (id, complaint_id, actor_id, actor_name, actor_role, verdict, comment, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (feedback_id, complaint_id, actor["id"], actor["full_name"], actor["role"],
+         payload.verdict, payload.comment, created_at),
+    )
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "FEEDBACK_ADDED", "complaint", complaint_id,
+        details=f"verdict={payload.verdict} comment={payload.comment or ''}",
+    )
+
+    return {
+        "success": True,
+        "feedback_id": feedback_id,
+        "complaint_id": complaint_id,
+        "verdict": payload.verdict,
+        "comment": payload.comment,
+        "actor": actor["full_name"],
+        "role": actor["role"],
+        "created_at": created_at,
+        "note": "Feedback recorded. ML prediction is unchanged.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/complaints/{complaint_id}/feedback
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/complaints/{complaint_id}/feedback")
+def get_ai_feedback(
+    complaint_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    """Admin or CERT: retrieve all AI feedback verdicts for a complaint."""
+    require_roles(authorization, ["admin", "cert"])
+
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM ai_feedback WHERE complaint_id = ? ORDER BY created_at ASC",
+        (complaint_id,),
+    ).fetchall()
+    conn.close()
+
+    return [dict(row) for row in rows]
