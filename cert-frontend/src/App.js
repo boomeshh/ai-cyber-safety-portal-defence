@@ -224,7 +224,7 @@ export default function App() {
               <span className="engine-dot" />
               Hybrid AI Engine Active &nbsp;·&nbsp; TF-IDF + LogisticRegression
               {modelInfo?.fallback_active && (
-                <span className="engine-fallback"> · Rule-Based Fallback</span>
+                <span className="engine-fallback"> · Rule fallback enabled for safety</span>
               )}
             </div>
           </div>
@@ -264,7 +264,7 @@ export default function App() {
           <SummaryCard label="Critical Alerts" value={summary?.critical_alerts} critical />
           <SummaryCard label="Escalated Cases" value={summary?.escalated_cases} />
           <SummaryCard label="Campaign Clusters" value={campaignClusters.length} />
-          <SummaryCard label="ML Model" value={modelInfo?.model_exists ? 'Active' : 'Fallback'} text />
+          <SummaryCard label="ML Model" value={modelInfo?.model_exists ? 'Hybrid Active' : 'Rule Fallback'} text />
           <SummaryCard label="Avg AI Confidence" value={summary?.avg_ai_confidence != null ? `${summary.avg_ai_confidence}%` : 'N/A'} text />
         </div>
 
@@ -274,7 +274,7 @@ export default function App() {
             <h2>Model Intelligence</h2>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span className={`panel-tag ${modelInfo?.model_exists ? '' : 'red-tag'}`}>
-                {modelInfo?.model_exists ? '✓ LogisticRegression Active' : '⚠ Fallback Mode'}
+                {modelInfo?.model_exists ? '✓ Hybrid Active (TF-IDF + LogisticRegression)' : '⚠ Rule fallback enabled for safety'}
               </span>
               {user.role === 'admin' && (
                 <button style={{ ...buttonStyle, padding: '7px 14px', fontSize: '0.85rem' }}

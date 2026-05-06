@@ -191,12 +191,7 @@ function MyComplaints() {
                     </div>
                   ) : null}
 
-                  <div className="complaint-section">
-                    <strong>Mitigation</strong>
-                    <p>{item.mitigation}</p>
-                  </div>
-
-                  {/* Phase B — Mitigation Steps Card */}
+                  {/* Mitigation — show structured steps if available, else plain text fallback */}
                   {Array.isArray(item.mitigation_steps) && item.mitigation_steps.length > 0 ? (
                     <div className="complaint-section" style={{ background: '#0f2a1a', border: '1px solid #166534', borderRadius: 10, padding: '12px 16px' }}>
                       <strong style={{ color: '#4ade80' }}>✅ Mitigation Steps</strong>
@@ -204,7 +199,12 @@ function MyComplaints() {
                         {item.mitigation_steps.map((step, i) => <li key={i} style={{ marginBottom: 4 }}>{step}</li>)}
                       </ol>
                     </div>
-                  ) : null}
+                  ) : (
+                    <div className="complaint-section">
+                      <strong>Mitigation</strong>
+                      <p>{item.mitigation}</p>
+                    </div>
+                  )}
 
                   {/* Phase B — Severity Explanation Card */}
                   {item.severity_explanation ? (
