@@ -915,6 +915,13 @@ def health_check():
     return {"status": "ok", "service": "rakshak-ai-backend"}
 
 
+@app.head("/health")
+def health_check_head():
+    """HEAD /health — for UptimeRobot and other uptime monitors that send HEAD requests."""
+    from fastapi.responses import Response
+    return Response(status_code=200)
+
+
 @app.post("/register")
 def register_user(payload: RegisterRequest):
     conn = get_connection()

@@ -53,3 +53,19 @@ def test_health_no_auth_required():
     assert response.status_code == 200, (
         "Health check should not require Authorization header"
     )
+
+
+def test_health_head_returns_200():
+    """HEAD /health must return HTTP 200 with empty body."""
+    response = client.head("/health")
+    assert response.status_code == 200, (
+        f"HEAD /health expected 200, got {response.status_code}"
+    )
+
+
+def test_health_head_no_auth_required():
+    """HEAD /health must work without Authorization header."""
+    response = client.head("/health", headers={})
+    assert response.status_code == 200, (
+        "HEAD /health should not require Authorization header"
+    )
