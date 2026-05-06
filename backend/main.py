@@ -909,6 +909,12 @@ def root():
     return {"message": "Rakshak AI Hybrid Backend Running"}
 
 
+@app.get("/health")
+def health_check():
+    """Public health check — no auth, no DB, no ML. Safe for uptime monitors."""
+    return {"status": "ok", "service": "rakshak-ai-backend"}
+
+
 @app.post("/register")
 def register_user(payload: RegisterRequest):
     conn = get_connection()
