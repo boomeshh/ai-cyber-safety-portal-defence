@@ -1,6 +1,6 @@
 """
 integrations.py — External integration helpers for Rakshak AI.
-Covers: email alerts (SMTP), threat intelligence URL check (VirusTotal stub),
+Covers: email alerts (SMTP + Resend), threat intelligence URL check (VirusTotal stub),
 and CERT alert dispatch.
 
 All functions are safe — failures are logged and never crash the main app.
@@ -19,22 +19,69 @@ from typing import Optional
 logger = logging.getLogger("integrations")
 
 # ---------------------------------------------------------------------------
-# Email configuration — read from environment variables
-# Set these in a .env file or your OS environment before starting the server.
+# SMTP configuration
 # ---------------------------------------------------------------------------
 SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
-# Strip all spaces — Gmail app passwords are 16 chars, spaces are just display formatting
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").replace(" ", "")
 ALERT_TO      = os.getenv("ALERT_TO", "")
 EMAIL_ENABLED = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
+
+# ---------------------------------------------------------------------------
+# Resend configuration
+# ---------------------------------------------------------------------------
+RESEND_ENABLED   = os.getenv("RESEND_ENABLED", "false").lower() == "true"
+RESEND_API_KEY   = os.getenv("RESEND_API_KEY", "")
+RESEND_FROM      = os.getenv("RESEND_FROM", "Rakshak AI <alerts@rakshakai.online>")
+RESEND_ALERT_TO  = os.getenv("RESEND_ALERT_TO", ALERT_TO)  # falls back to SMTP recipients
 
 # ---------------------------------------------------------------------------
 # VirusTotal configuration (optional)
 # ---------------------------------------------------------------------------
 VT_API_KEY    = os.getenv("VT_API_KEY", "")
 VT_ENABLED    = os.getenv("VT_ENABLED", "false").lower() == "true"
+
+
+# ---------------------------------------------------------------------------
+# Resend email alert
+# ---------------------------------------------------------------------------
+def send_resend_alert(subject: str, html: str) -> bool:
+    """
+    Send an HTML email via the Resend API.
+    Returns True on success, False on failure.
+    Silently skips if RESEND_ENABLED is False or credentials are missing.
+    """
+    if not RESEND_ENABLED:
+        logger.debug("[integrations] Resend alerts disabled (RESEND_ENABLED=false).")
+        return False
+
+    if not RESEND_API_KEY:
+        logger.warning("[integrations] RESEND_API_KEY not configured. Skipping Resend alert.")
+        return False
+
+    recipients = [a.strip() for a in RESEND_ALERT_TO.split(",") if a.strip()]
+    if not recipients:
+        logger.warning("[integrations] No Resend recipients configured (RESEND_ALERT_TO).")
+        return False
+
+    try:
+        import resend  # installed via requirements.txt
+        resend.api_key = RESEND_API_KEY
+
+        params = {
+            "from": RESEND_FROM,
+            "to": recipients,
+            "subject": subject,
+            "html": html,
+        }
+        response = resend.Emails.send(params)
+        logger.info(f"[integrations] Resend alert sent — id={response.get('id')} to={recipients} subject={subject!r}")
+        return True
+
+    except Exception as exc:
+        logger.error(f"[integrations] Resend send failed: {exc}")
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -106,21 +153,60 @@ def send_alert_email(
 def send_high_risk_alert(complaint_id: str, risk_level: str, threat_type: str,
                           user_name: str, ai_confidence: int) -> bool:
     """
-    Send a formatted high/critical risk alert email.
+    Send a formatted high/critical risk alert.
+    Tries Resend first (if enabled), falls back to SMTP.
     Called after complaint creation when risk_level is High or Critical.
     """
     subject = f"[{risk_level.upper()} ALERT] Rakshak AI — New {risk_level} Threat Detected"
-    body = (
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Shared HTML body used by both Resend and SMTP
+    html_body = f"""
+    <html><body style="background:#020617;color:#e2e8f0;font-family:Arial,sans-serif;padding:24px;">
+      <div style="max-width:600px;margin:0 auto;background:#0f172a;border:1px solid #1e293b;
+                  border-radius:16px;padding:24px;">
+        <div style="color:#38bdf8;font-weight:800;font-size:0.85rem;letter-spacing:2px;
+                    margin-bottom:12px;">RAKSHAK AI · {risk_level.upper()} ALERT</div>
+        <h2 style="color:#f8fafc;margin-bottom:16px;">{subject}</h2>
+        <table style="width:100%;border-collapse:collapse;color:#cbd5e1;font-size:0.9rem;">
+          <tr><td style="padding:6px 0;color:#64748b;">Complaint ID</td><td>{complaint_id}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Risk Level</td>
+              <td style="color:{'#ef4444' if risk_level=='Critical' else '#f97316'};font-weight:700;">{risk_level}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Threat Type</td><td>{threat_type}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Reported By</td><td>{user_name}</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">AI Confidence</td><td>{ai_confidence}%</td></tr>
+          <tr><td style="padding:6px 0;color:#64748b;">Time</td><td>{timestamp}</td></tr>
+        </table>
+        <div style="margin-top:20px;padding:12px 16px;background:#1e293b;border-radius:10px;
+                    color:#94a3b8;font-size:0.85rem;">
+          Action Required: Log in to the Admin/CERT dashboard to review this case.
+        </div>
+        <div style="margin-top:16px;color:#475569;font-size:0.78rem;">
+          Sent at {timestamp} · Rakshak AI Defence Portal
+        </div>
+      </div>
+    </body></html>
+    """
+
+    plain_body = (
         f"Complaint ID : {complaint_id}\n"
         f"Risk Level   : {risk_level}\n"
         f"Threat Type  : {threat_type}\n"
         f"Reported By  : {user_name}\n"
         f"AI Confidence: {ai_confidence}%\n"
-        f"Time         : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        f"Action Required: Log in to the Admin/CERT dashboard to review this case.\n"
-        f"Dashboard URL: http://localhost:3001"
+        f"Time         : {timestamp}\n\n"
+        f"Action Required: Log in to the Admin/CERT dashboard to review this case."
     )
-    return send_alert_email(subject, body)
+
+    # Try Resend first
+    if RESEND_ENABLED:
+        result = send_resend_alert(subject, html_body)
+        if result:
+            return True
+        logger.warning("[integrations] Resend failed — attempting SMTP fallback.")
+
+    # Fall back to SMTP
+    return send_alert_email(subject, plain_body)
 
 
 # ---------------------------------------------------------------------------

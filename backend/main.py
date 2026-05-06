@@ -1784,3 +1784,70 @@ def get_url_intel(complaint_id: str, authorization: Optional[str] = Header(defau
 
     result = check_url_threat_intel(url)
     return {"complaint_id": complaint_id, "url": url, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# POST /test-email-alert — Admin-only test endpoint for Resend/SMTP alerts
+# ---------------------------------------------------------------------------
+
+@app.post("/test-email-alert")
+def test_email_alert(authorization: Optional[str] = Header(default=None)):
+    """
+    Admin-only: send a test alert email to verify Resend/SMTP configuration.
+    Returns which channel was used and whether it succeeded.
+    """
+    from integrations import send_resend_alert, send_alert_email, RESEND_ENABLED, EMAIL_ENABLED
+
+    actor = require_roles(authorization, ["admin"])
+
+    subject = "Rakshak AI — Test Alert"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    html_body = f"""
+    <html><body style="background:#020617;color:#e2e8f0;font-family:Arial,sans-serif;padding:24px;">
+      <div style="max-width:600px;margin:0 auto;background:#0f172a;border:1px solid #1e293b;
+                  border-radius:16px;padding:24px;">
+        <div style="color:#38bdf8;font-weight:800;font-size:0.85rem;letter-spacing:2px;
+                    margin-bottom:12px;">RAKSHAK AI · TEST ALERT</div>
+        <h2 style="color:#f8fafc;margin-bottom:16px;">Email Alert Configuration Test</h2>
+        <p style="color:#cbd5e1;">This is a test alert triggered by <strong>{actor['full_name']}</strong>
+           ({actor['role']}) at {timestamp}.</p>
+        <p style="color:#94a3b8;font-size:0.85rem;">If you received this, your alert configuration is working correctly.</p>
+      </div>
+    </body></html>
+    """
+
+    plain_body = (
+        f"Test alert triggered by {actor['full_name']} ({actor['role']}) at {timestamp}.\n"
+        f"If you received this, your alert configuration is working correctly."
+    )
+
+    channel_used = None
+    success = False
+
+    if RESEND_ENABLED:
+        success = send_resend_alert(subject, html_body)
+        if success:
+            channel_used = "resend"
+
+    if not success and EMAIL_ENABLED:
+        success = send_alert_email(subject, plain_body)
+        if success:
+            channel_used = "smtp"
+
+    write_audit(
+        actor["id"], actor["full_name"], actor["role"],
+        "TEST_ALERT_SENT", "system",
+        details=f"channel={channel_used or 'none'} success={success}",
+    )
+
+    return {
+        "success": success,
+        "channel_used": channel_used,
+        "resend_enabled": RESEND_ENABLED,
+        "smtp_enabled": EMAIL_ENABLED,
+        "message": (
+            f"Test alert sent via {channel_used}." if success
+            else "No alert sent — both Resend and SMTP are disabled or misconfigured."
+        ),
+    }

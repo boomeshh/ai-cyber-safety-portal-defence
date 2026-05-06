@@ -6,3 +6,5 @@ openpyxl
 pydantic[email]
 scikit-learn
 python-dotenv
+resend
+resend
