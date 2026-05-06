@@ -886,6 +886,157 @@ init_db()
 seed_complaints(DB_NAME)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1 — Judge-impact helpers
+# ---------------------------------------------------------------------------
+
+def build_mitigation_steps(threat_type: str, risk_level: str) -> list[str]:
+    """
+    Return a structured list of mitigation steps based on threat_type and risk_level.
+    Purely rule-based — does not touch ML logic.
+    """
+    t = (threat_type or "").lower()
+    steps: list[str] = []
+
+    if "phishing" in t:
+        steps = [
+            "Do NOT click any links or download attachments from the suspicious message.",
+            "Change your password immediately on any accounts that may be affected.",
+            "Enable Two-Factor Authentication (2FA) on your accounts.",
+            "Block the sender and report the message to your unit cyber cell.",
+            "Report the incident to your Admin/CERT officer via this portal.",
+        ]
+    elif "malware" in t or "apk" in t:
+        steps = [
+            "Uninstall the suspicious APK or application immediately.",
+            "Disconnect the device from the internet (Wi-Fi and mobile data).",
+            "Run a full antivirus/anti-malware scan on the device.",
+            "Do NOT use the device for sensitive communications until cleared.",
+            "Preserve the APK file as evidence and report to your unit security officer.",
+        ]
+    elif "opsec" in t or "espionage" in t:
+        steps = [
+            "Delete or retract any sensitive content that was shared.",
+            "Notify your unit intelligence officer and commanding officer immediately.",
+            "Do NOT share any further operational details on digital platforms.",
+            "Preserve all communication records as evidence.",
+            "Avoid contact with the suspicious individual until investigation is complete.",
+        ]
+    elif "honeytrap" in t or "social engineering" in t:
+        steps = [
+            "Cease all communication with the suspicious contact immediately.",
+            "Do NOT share personal documents, credentials, or financial details.",
+            "Report the contact details to your unit security officer.",
+            "Inform family members to be cautious of similar approaches.",
+            "Verify any official communication through authorised channels only.",
+        ]
+    elif "fraud" in t or "financial" in t:
+        steps = [
+            "Do NOT make any payments or share card/OTP details.",
+            "Contact your bank immediately if any financial details were shared.",
+            "Block the suspicious number/account.",
+            "File a complaint at cybercrime.gov.in or your nearest cyber cell.",
+            "Report the incident to your unit welfare officer.",
+        ]
+    elif "spam" in t or "suspicious communication" in t:
+        steps = [
+            "Block the sender and mark the message as spam.",
+            "Do NOT engage with or respond to the message.",
+            "Register on the DND (Do Not Disturb) service with your telecom provider.",
+            "Report repeated harassment to your local cyber cell.",
+        ]
+    else:
+        steps = [
+            "Do NOT act on any instructions from the suspicious message.",
+            "Preserve all evidence (screenshots, message logs, files).",
+            "Report the incident to your unit cyber cell or Admin/CERT officer.",
+            "Avoid sharing the content further until it is reviewed.",
+        ]
+
+    # Add escalation step for High/Critical
+    if risk_level in ("High", "Critical"):
+        steps.append(
+            "URGENT: This case has been flagged as high priority. "
+            "Contact your CERT officer immediately for expedited review."
+        )
+
+    return steps
+
+
+def build_severity_explanation(
+    risk_level: str,
+    risk_score: int,
+    ai_confidence: int,
+    threat_type: str,
+    indicators: list[str],
+) -> dict:
+    """
+    Return a human-readable explanation of why this risk level was assigned.
+    Uses only existing analysis fields — does not call ML model.
+    """
+    level_descriptions = {
+        "Critical": "This complaint shows multiple high-confidence indicators of a serious cyber threat. Immediate action is required.",
+        "High":     "This complaint contains strong indicators of a cyber threat. Prompt review and action is recommended.",
+        "Medium":   "This complaint shows moderate risk indicators. Review is recommended to determine if further action is needed.",
+        "Low":      "This complaint shows limited risk indicators. It is logged for awareness but may not require immediate action.",
+    }
+
+    score_band = (
+        "very high (81–100)" if risk_score >= 81 else
+        "high (61–80)"       if risk_score >= 61 else
+        "moderate (41–60)"   if risk_score >= 41 else
+        "low (0–40)"
+    )
+
+    top_indicators = indicators[:3] if indicators else []
+
+    return {
+        "risk_level": risk_level,
+        "risk_score": risk_score,
+        "score_band": score_band,
+        "ai_confidence_pct": ai_confidence,
+        "threat_type": threat_type,
+        "summary": level_descriptions.get(risk_level, "Risk level assigned based on AI analysis."),
+        "top_indicators": top_indicators,
+        "note": (
+            "This assessment combines rule-based keyword analysis with a "
+            "TF-IDF + Logistic Regression ML model. Higher scores reflect "
+            "more suspicious patterns detected in the complaint."
+        ),
+    }
+
+
+def extract_ioc(complaint_text: str, suspicious_url: str) -> dict:
+    """
+    Extract Indicators of Compromise (IOCs) from complaint text and URL.
+    Returns urls, domains, emails, phones as separate lists.
+    Returns empty lists if nothing found — never raises.
+    """
+    import re
+    combined = f"{complaint_text or ''} {suspicious_url or ''}"
+
+    urls = re.findall(r'https?://[^\s<>"\']+|www\.[^\s<>"\']+', combined)
+    domains = []
+    for u in urls:
+        try:
+            from urllib.parse import urlparse
+            netloc = urlparse(u if u.startswith("http") else f"https://{u}").netloc
+            if netloc:
+                domains.append(netloc.lower())
+        except Exception:
+            pass
+
+    phones = re.findall(r'\b(?:\+91[\-\s]?)?[6-9]\d{9}\b|\b\d{10,12}\b', combined)
+    emails = re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', combined)
+
+    return {
+        "urls":    list(dict.fromkeys(urls))[:10],
+        "domains": list(dict.fromkeys(domains))[:10],
+        "emails":  list(dict.fromkeys(emails))[:10],
+        "phones":  list(dict.fromkeys(phones))[:10],
+    }
+
+
 # ---------------- Request Models ----------------
 class RegisterRequest(BaseModel):
     full_name: str
@@ -1165,6 +1316,15 @@ async def create_complaint(
         "threat_type": ai_result["threat_type"],
         "ai_reason": ai_result["reason"],
         "mitigation": ai_result["mitigation"],
+        "mitigation_steps": build_mitigation_steps(ai_result["threat_type"], ai_result["level"]),
+        "severity_explanation": build_severity_explanation(
+            ai_result["level"],
+            ai_result["score"],
+            int(ai_result["confidence"]),
+            ai_result["threat_type"],
+            ev_indicators.get("urls", []) + [ai_result["threat_type"]],
+        ),
+        "ioc": extract_ioc(complaint_text, suspicious_url),
         "ai_confidence": ai_result["confidence"],
         "status": ai_result["status"],
         "linked_case_count": linked_case_count,
@@ -1215,7 +1375,37 @@ def get_my_complaints(user_id: str, authorization: Optional[str] = Header(defaul
     ).fetchall()
     conn.close()
 
-    return [dict(row) for row in rows]
+    results = []
+    for row in rows:
+        r = dict(row)
+        # Parse stored indicators for IOC
+        import json as _json
+        ev_ind = {}
+        try:
+            raw = r.get("evidence_indicators") or "{}"
+            ev_ind = _json.loads(raw) if raw else {}
+        except Exception:
+            pass
+
+        r["mitigation_steps"] = build_mitigation_steps(
+            r.get("threat_type", ""), r.get("risk_level", "Low")
+        )
+        r["severity_explanation"] = build_severity_explanation(
+            r.get("risk_level", "Low"),
+            int(r.get("risk_score") or 0),
+            int(r.get("ai_confidence") or 0),
+            r.get("threat_type", ""),
+            ev_ind.get("urls", []),
+        )
+        r["ioc"] = {
+            "urls":    ev_ind.get("urls", []),
+            "domains": [],
+            "emails":  ev_ind.get("emails", []),
+            "phones":  ev_ind.get("phones", []),
+        }
+        results.append(r)
+
+    return results
 
 
 @app.get("/complaints/{complaint_id}/evidence")
@@ -1236,6 +1426,16 @@ def get_evidence_file(complaint_id: str, authorization: Optional[str] = Header(d
 
     if not row.get("evidence_path") or not os.path.exists(row["evidence_path"]):
         raise HTTPException(status_code=404, detail="Evidence file not found")
+
+    write_audit(
+        user["id"],
+        user.get("full_name", user["id"]),
+        user["role"],
+        "EVIDENCE_DOWNLOADED",
+        "complaint",
+        complaint_id,
+        details=f"Evidence file accessed: {row.get('evidence_name', '')}",
+    )
 
     return FileResponse(
         path=row["evidence_path"],
@@ -1632,6 +1832,16 @@ def get_evidence_meta(complaint_id: str, authorization: Optional[str] = Header(d
 
     if not row.get("evidence_path"):
         return {"available": False}
+
+    write_audit(
+        user["id"],
+        user.get("full_name", user["id"]),
+        user["role"],
+        "EVIDENCE_META_VIEWED",
+        "complaint",
+        complaint_id,
+        details=f"Evidence metadata accessed by {user['role']}",
+    )
 
     import json as _json
     ev_indicators = {}
