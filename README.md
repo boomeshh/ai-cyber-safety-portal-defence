@@ -83,7 +83,11 @@ This project was built to explore real-world applications of AI in cybersecurity
 ---
 
 ## 🌍 Live Demo
-Frontend can be deployed on Vercel. Backend can be hosted on AWS EC2.
+Frontend can be deployed on Vercel. Backend can be hosted on Render.
+
+User - https://www.rakshakai.online
+Admin - https://admin.rakshakai.online
+Cert - https://cert.rakshakai.online
 
 ---
 
