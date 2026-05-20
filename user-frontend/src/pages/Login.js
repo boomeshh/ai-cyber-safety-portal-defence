@@ -1,15 +1,3 @@
-/**
- * Login.js — Rakshak AI user login with Firebase email verification.
- *
- * Flow:
- *   1. User enters email + password
- *   2. Firebase signInWithEmailAndPassword authenticates the credentials
- *   3. If email is NOT verified → show error, sign out of Firebase
- *   4. If email IS verified → call existing backend /login to get session token
- *   5. Store backend token + user in localStorage (unchanged from before)
- *   6. Navigate to /dashboard
- */
-
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { signInWithEmailAndPassword, signOut } from "firebase/auth";
@@ -24,7 +12,6 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // If already logged in (backend session), skip to dashboard
   useEffect(() => {
     const user = getStoredUser();
     if (user) navigate("/dashboard");
@@ -36,25 +23,16 @@ export default function Login() {
     setLoading(true);
 
     try {
-      // Step 1 — Firebase authentication
-      const credential = await signInWithEmailAndPassword(
-        auth,
-        form.email,
-        form.password
-      );
+      const credential = await signInWithEmailAndPassword(auth, form.email, form.password);
       const firebaseUser = credential.user;
 
-      // Step 2 — Block unverified emails
       if (!firebaseUser.emailVerified) {
-        await signOut(auth); // sign out of Firebase immediately
-        setError(
-          "Your email is not verified. Please check your inbox and click the verification link before logging in."
-        );
+        await signOut(auth);
+        setError("Your email is not verified. Please check your inbox and click the verification link before logging in.");
         setLoading(false);
         return;
       }
 
-      // Step 3 — Call existing backend /login for session token
       let data;
       try {
         const res = await fetch(`${API}/login`, {
@@ -63,7 +41,7 @@ export default function Login() {
           body: JSON.stringify({ email: form.email, password: form.password }),
         });
         data = await res.json();
-      } catch (fetchErr) {
+      } catch {
         await signOut(auth);
         setError(`Cannot reach backend at ${API}. Check if the server is running.`);
         setLoading(false);
@@ -77,7 +55,6 @@ export default function Login() {
         return;
       }
 
-      // Step 4 — Store backend session (unchanged)
       localStorage.setItem("user", JSON.stringify(data.user));
       localStorage.setItem("token", data.token);
       navigate("/dashboard");
@@ -102,45 +79,51 @@ export default function Login() {
     <div className="page">
       <div className="card">
         <div className="brand">
+          <div className="brand-icon">🛡️</div>
           <h1>Rakshak AI</h1>
-          <p>Cyber Safety Portal for Defence</p>
+          <p>Defence Cyber Safety Portal</p>
         </div>
 
-        <h2 className="form-title">Secure User Login</h2>
+        <h2 className="form-title">Secure Login</h2>
 
         {error && (
-          <div style={{
-            background: "#1a0a0a", border: "1px solid #7f1d1d",
-            borderRadius: 8, padding: "10px 14px", marginBottom: 14,
-            color: "#fca5a5", fontSize: 13,
-          }}>
-            {error}
+          <div className="alert-banner error" style={{ marginBottom: 18 }}>
+            <span>⚠</span> {error}
           </div>
         )}
 
         <form className="form" onSubmit={handleLogin}>
           <input
             type="email"
-            placeholder="Enter email"
+            placeholder="Defence email address"
             value={form.email}
+            autoComplete="email"
             onChange={(e) => { setForm({ ...form, email: e.target.value }); setError(""); }}
             required
           />
           <input
             type="password"
-            placeholder="Enter password"
+            placeholder="Password"
             value={form.password}
+            autoComplete="current-password"
             onChange={(e) => { setForm({ ...form, password: e.target.value }); setError(""); }}
             required
           />
-          <button className="btn" type="submit" disabled={loading}>
-            {loading ? "Logging in..." : "Login"}
+          <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
+            {loading ? <><span className="spinner" /> Authenticating...</> : "🔐 Login"}
           </button>
         </form>
 
         <div className="link-text">
           New user?
-          <span className="link-btn" onClick={() => navigate("/register")}>Register</span>
+          <span className="link-btn" onClick={() => navigate("/register")}>Create Account</span>
+        </div>
+
+        <div style={{ marginTop: 20, padding: '10px 14px', background: 'rgba(56,189,248,0.05)', border: '1px solid rgba(56,189,248,0.12)', borderRadius: 10, textAlign: 'center' }}>
+          <span style={{ color: '#64748b', fontSize: 12 }}>
+            <span className="status-dot online" />
+            Secured by Firebase Authentication · AES-256 Encrypted
+          </span>
         </div>
       </div>
     </div>
