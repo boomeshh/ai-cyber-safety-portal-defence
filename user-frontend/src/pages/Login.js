@@ -55,12 +55,20 @@ export default function Login() {
       }
 
       // Step 3 — Call existing backend /login for session token
-      const res = await fetch(`${API}/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: form.email, password: form.password }),
-      });
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch(`${API}/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: form.email, password: form.password }),
+        });
+        data = await res.json();
+      } catch (fetchErr) {
+        await signOut(auth);
+        setError(`Cannot reach backend at ${API}. Check if the server is running.`);
+        setLoading(false);
+        return;
+      }
 
       if (!data.success) {
         await signOut(auth);
@@ -75,7 +83,6 @@ export default function Login() {
       navigate("/dashboard");
 
     } catch (err) {
-      // Map Firebase error codes to friendly messages
       const code = err.code || "";
       if (code === "auth/user-not-found" || code === "auth/wrong-password" || code === "auth/invalid-credential") {
         setError("Invalid email or password.");
@@ -83,8 +90,6 @@ export default function Login() {
         setError("Too many failed attempts. Please try again later.");
       } else if (code === "auth/network-request-failed") {
         setError("Network error. Check your internet connection.");
-      } else if (err.message?.includes("fetch")) {
-        setError("Backend connection failed. Check if backend is running.");
       } else {
         setError(err.message || "Login failed. Please try again.");
       }
