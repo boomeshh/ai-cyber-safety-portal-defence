@@ -46,16 +46,23 @@ export default function Register() {
     setLoading(true);
     try {
       // Step 1 — Register with existing backend (creates user record + session)
-      const res = await fetch(`${API}/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          full_name: form.full_name,
-          email: form.email,
-          password: form.password,
-        }),
-      });
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch(`${API}/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            full_name: form.full_name,
+            email: form.email,
+            password: form.password,
+          }),
+        });
+        data = await res.json();
+      } catch (fetchErr) {
+        setError(`Cannot reach backend at ${API}. Check if the server is running.`);
+        setLoading(false);
+        return;
+      }
 
       if (!data.success) {
         setError(data.message || "Registration failed. Email may already be in use.");
@@ -89,8 +96,6 @@ export default function Register() {
         setError("Invalid email address.");
       } else if (code === "auth/network-request-failed") {
         setError("Network error. Check your internet connection.");
-      } else if (err.message?.includes("fetch")) {
-        setError("Backend connection failed. Check if backend is running.");
       } else {
         setError(err.message || "Registration failed. Please try again.");
       }
