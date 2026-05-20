@@ -8,8 +8,8 @@
  *   - Sign out and go back to login
  */
 
-import { useState } from "react";
-import { sendEmailVerification, signOut, reload } from "firebase/auth";
+import { useState, useEffect } from "react";
+import { sendEmailVerification, signOut, reload, onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebase";
 import { logoutUser } from "../utils/auth";
 import { useNavigate } from "react-router-dom";
@@ -19,16 +19,38 @@ export default function VerifyEmail() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+
+  // Wait for Firebase to resolve auth state before showing actions
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+      setSessionLoading(false);
+      // If user is already verified, go straight to dashboard
+      if (user?.emailVerified) {
+        navigate("/dashboard");
+      }
+    });
+    return unsubscribe;
+  }, [navigate]);
 
   const resendVerification = async () => {
     setMsg(""); setError(""); setLoading(true);
     try {
-      const user = auth.currentUser;
-      if (!user) { setError("No active session. Please log in again."); return; }
+      const user = auth.currentUser || currentUser;
+      if (!user) {
+        setError("Session expired. Please register again.");
+        return;
+      }
       await sendEmailVerification(user);
-      setMsg("Verification email sent. Please check your inbox and spam folder.");
+      setMsg("Verification email sent! Check your inbox and spam/junk folder.");
     } catch (err) {
-      setError(err.message || "Failed to send verification email.");
+      if (err.code === "auth/too-many-requests") {
+        setError("Too many requests. Please wait a few minutes before resending.");
+      } else {
+        setError(err.message || "Failed to send verification email.");
+      }
     } finally {
       setLoading(false);
     }
@@ -37,14 +59,18 @@ export default function VerifyEmail() {
   const checkVerified = async () => {
     setMsg(""); setError(""); setLoading(true);
     try {
-      const user = auth.currentUser;
-      if (!user) { setError("No active session."); return; }
-      await reload(user); // refresh Firebase user state
+      const user = auth.currentUser || currentUser;
+      if (!user) {
+        setError("Session expired. Please log in again.");
+        navigate("/");
+        return;
+      }
+      await reload(user);
       if (user.emailVerified) {
-        setMsg("Email verified! Redirecting...");
+        setMsg("Email verified! Redirecting to dashboard...");
         setTimeout(() => navigate("/dashboard"), 1000);
       } else {
-        setError("Email not verified yet. Please check your inbox.");
+        setError("Email not verified yet. Please click the link in your inbox, then try again.");
       }
     } catch (err) {
       setError(err.message || "Could not check verification status.");
@@ -55,9 +81,19 @@ export default function VerifyEmail() {
 
   const handleSignOut = async () => {
     await signOut(auth);
-    logoutUser(); // clear backend session too
+    await logoutUser();
     navigate("/");
   };
+
+  if (sessionLoading) {
+    return (
+      <div className="page">
+        <div className="card" style={{ textAlign: "center" }}>
+          <p style={{ color: "#94a3b8" }}>Loading session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
