@@ -17,8 +17,8 @@ export default function PublicAwareness() {
   if (!data) return <div className="page"><div className="card"><p style={{ color: "#94a3b8" }}>Loading...</p></div></div>;
 
   return (
-    <div className="page" style={{ minHeight: "100vh", padding: "32px 16px" }}>
-      <div style={{ maxWidth: 800, margin: "0 auto" }}>
+    <div className="page" style={{ minHeight: "100vh", padding: "28px 16px", alignItems: "flex-start" }}>
+      <div style={{ maxWidth: 800, width: "100%", margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <h1 style={{ color: "#f8fafc", fontSize: "1.8rem" }}>Rakshak AI</h1>
           <p style={{ color: "#94a3b8" }}>Cyber Threat Awareness Dashboard — Anonymized Public Statistics</p>
@@ -31,7 +31,7 @@ export default function PublicAwareness() {
           <StatCard label="Resolved" value={data.status_distribution?.Resolved || 0} color="#22c55e" />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 28 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16, marginBottom: 28 }}>
           <Panel title="Top Threat Types">
             {data.top_threat_types.map((t, i) => (
               <BarRow key={i} label={t.type} value={t.count} max={data.top_threat_types[0]?.count || 1} />

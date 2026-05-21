@@ -224,12 +224,32 @@ function MyComplaints() {
 
                   {/* Phase B — IOC Panel */}
                   {item.ioc && (item.ioc.urls?.length > 0 || item.ioc.emails?.length > 0 || item.ioc.phones?.length > 0 || item.ioc.domains?.length > 0) ? (
-                    <div className="complaint-section" style={{ background: '#1a0f1e', border: '1px solid #6b21a8', borderRadius: 10, padding: '12px 16px' }}>
+                    <div className="complaint-section" style={{ background: '#1a0f1e', border: '1px solid #6b21a8', borderRadius: 10, padding: '12px 14px' }}>
                       <strong style={{ color: '#c084fc' }}>🔍 Extracted IOCs</strong>
-                      {item.ioc.urls?.length > 0 ? <div style={{ marginTop: 6 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>URLs: </span>{item.ioc.urls.map((u, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6, wordBreak: 'break-all' }}>{u}</span>)}</div> : null}
-                      {item.ioc.domains?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Domains: </span>{item.ioc.domains.map((d, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{d}</span>)}</div> : null}
-                      {item.ioc.emails?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Emails: </span>{item.ioc.emails.map((e, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{e}</span>)}</div> : null}
-                      {item.ioc.phones?.length > 0 ? <div style={{ marginTop: 4 }}><span style={{ color: '#94a3b8', fontSize: 12 }}>Phones: </span>{item.ioc.phones.map((p, i) => <span key={i} style={{ color: '#a78bfa', fontSize: 12, marginRight: 6 }}>{p}</span>)}</div> : null}
+                      {item.ioc.urls?.length > 0 ? (
+                        <div style={{ marginTop: 6 }}>
+                          <span style={{ color: '#94a3b8', fontSize: 12 }}>URLs: </span>
+                          {item.ioc.urls.map((u, i) => <span key={i} className="ioc-value" style={{ marginRight: 6, display: 'inline-block' }}>{u}</span>)}
+                        </div>
+                      ) : null}
+                      {item.ioc.domains?.length > 0 ? (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ color: '#94a3b8', fontSize: 12 }}>Domains: </span>
+                          {item.ioc.domains.map((d, i) => <span key={i} className="ioc-value" style={{ marginRight: 6, display: 'inline-block' }}>{d}</span>)}
+                        </div>
+                      ) : null}
+                      {item.ioc.emails?.length > 0 ? (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ color: '#94a3b8', fontSize: 12 }}>Emails: </span>
+                          {item.ioc.emails.map((e, i) => <span key={i} className="ioc-value" style={{ marginRight: 6, display: 'inline-block' }}>{e}</span>)}
+                        </div>
+                      ) : null}
+                      {item.ioc.phones?.length > 0 ? (
+                        <div style={{ marginTop: 4 }}>
+                          <span style={{ color: '#94a3b8', fontSize: 12 }}>Phones: </span>
+                          {item.ioc.phones.map((p, i) => <span key={i} className="ioc-value" style={{ marginRight: 6, display: 'inline-block' }}>{p}</span>)}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
 
@@ -242,8 +262,8 @@ function MyComplaints() {
           </div>
         )}
 
-        <button className="btn" style={{ marginTop: "20px", background: "#334155" }} onClick={() => navigate("/dashboard")}>
-          Back to Dashboard
+        <button className="btn" style={{ marginTop: "20px", background: "#334155", width: 'auto' }} onClick={() => navigate("/dashboard")}>
+          ← Back to Dashboard
         </button>
       </div>
     </div>
