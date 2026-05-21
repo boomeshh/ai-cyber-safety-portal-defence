@@ -99,8 +99,9 @@ export default function VerifyEmail() {
     <div className="page">
       <div className="card">
         <div className="brand">
+          <div className="brand-icon">🛡️</div>
           <h1>Rakshak AI</h1>
-          <p>Cyber Safety Portal for Defence</p>
+          <p>Defence Cyber Safety Portal</p>
         </div>
 
         <h2 className="form-title">Verify Your Email</h2>
@@ -110,8 +111,8 @@ export default function VerifyEmail() {
           Please verify your email before accessing the portal.
         </p>
 
-        {msg   && <div style={{ color: "#4ade80", marginBottom: 12, fontSize: 13, textAlign: "center" }}>{msg}</div>}
-        {error && <div style={{ color: "#fca5a5", marginBottom: 12, fontSize: 13, textAlign: "center" }}>{error}</div>}
+        {msg   && <div className="alert-banner success" style={{ marginBottom: 12 }}><span>✓</span> {msg}</div>}
+        {error && <div className="alert-banner error"   style={{ marginBottom: 12 }}><span>⚠</span> {error}</div>}
 
         <div className="form" style={{ gap: 12 }}>
           <button className="btn" onClick={checkVerified} disabled={loading}>
