@@ -1,104 +1,305 @@
-# 🔐 Rakshak AI — Cyber Safety Portal for Defence
+# 🛡️ Rakshak AI — YUDHISTHIRA
+### AI-Powered Defence Cyber Incident & Safety Portal
 
-AI-powered cyber incident reporting and threat intelligence platform designed for defence personnel, families, and veterans.
+> Inspired by **Smart India Hackathon 2025 — Problem Statement ID 25183**
+> Built for defence personnel, families, and veterans of the Indian Armed Forces.
 
----
-
-## 🚀 Overview
-Rakshak AI helps users report suspicious messages, links, or cyber incidents.
-
-The system analyzes threats using a hybrid AI engine and provides risk scores, classifications, and actionable insights.
+**Live:** [rakshakai.online](https://www.rakshakai.online) · [admin.rakshakai.online](https://admin.rakshakai.online) · [cert.rakshakai.online](https://cert.rakshakai.online)
 
 ---
 
-## 🧠 AI Engine
-- Rule-based detection (keywords, URL patterns)
-- Machine Learning model (TF-IDF + Logistic Regression)
-- Hybrid decision logic (rule + ML)
-- Explainable outputs (reason + confidence)
+## 🎯 Problem Statement
+
+Defence personnel, veterans, and their families are increasingly targeted by sophisticated cyber threats — phishing, malware, honeytrap operations, OPSEC leaks, and financial fraud. Existing reporting systems are slow, manual, and lack AI-powered threat intelligence.
+
+**Rakshak AI** solves this by providing an automated, AI-driven cyber incident reporting and threat analysis platform purpose-built for the defence ecosystem.
 
 ---
 
-## 📊 Features
-- Complaint submission with evidence (text, URL, screenshot)
-- Threat classification (Phishing, OPSEC Risk, etc.)
-- Risk scoring (Low / Medium / High / Critical)
-- Campaign detection (linked cases)
-- Admin dashboard for triage
-- CERT Command Center with analytics
+## 🚀 Live Deployment
+
+| Service | URL |
+|---------|-----|
+| 👤 User Portal | https://www.rakshakai.online |
+| 🔐 Admin Dashboard | https://admin.rakshakai.online |
+| 🛡️ CERT Command Center | https://cert.rakshakai.online |
+| ⚙️ Backend API | https://ai-cyber-safety-portal-defence.onrender.com |
+| 📖 API Docs | https://ai-cyber-safety-portal-defence.onrender.com/docs |
+
+---
+
+## ✨ Key Features
+
+### 👤 User Portal
+- Firebase Email Authentication with email verification
+- Submit cyber complaints with multi-format evidence (images, PDF, audio, video, APK)
+- Real-time AI threat analysis with risk scoring
+- View complaint history with AI confidence, IOC extraction, and mitigation steps
+- Mobile-first responsive design
+
+### 🔐 Admin Dashboard
+- Role-based complaint triage queue
+- Status management (Open → Under Review → Escalated → Resolved)
+- Internal case notes and AI feedback system
+- Evidence open/download with JWT authentication
+- Campaign intelligence graph and audit trail
+
+### 🛡️ CERT Command Center
+- Live critical alert feed (auto-refresh every 5 seconds)
+- Heatmap intelligence (Hour vs Day, Channel vs Risk, Category vs Channel)
+- Campaign cluster analysis and ML model intelligence panel
+- Excel export for offline analysis
+- Model retraining with safety guardrails
+
+---
+
+## 🧠 AI/ML Engine
+
+| Component | Technology |
+|-----------|-----------|
+| Feature Extraction | TF-IDF Vectorizer |
+| Classification | Logistic Regression (7-class) |
+| Decision Logic | Hybrid Rule + ML |
+| Threat Classes | Phishing, Malware/APK, Honeytrap, Financial Fraud, OPSEC Risk, Espionage, Suspicious Communication |
+| IOC Extraction | Regex-based URL/domain/email/phone extraction |
+| Campaign Detection | Linked indicator matching |
+| Auto-Retrain | Safety-guarded (no model replacement if accuracy drops) |
 
 ---
 
 ## 🏗️ Architecture
 
-User → Frontend (React) → Backend (FastAPI) → AI Engine → Database → Dashboards
+```
+User Browser
+    │
+    ├── User Frontend (React + Firebase Auth) ──► Vercel
+    ├── Admin Frontend (React) ──────────────────► Vercel
+    └── CERT Frontend (React + Chart.js) ────────► Vercel
+              │
+              ▼
+    FastAPI Backend (Python) ────────────────────► Render
+              │
+    ┌─────────┼──────────────┐
+    │         │              │
+  SQLite    ML Engine    Resend Email
+  Database  (sklearn)    Alerts
+```
 
 ---
 
 ## 🧰 Tech Stack
-- Frontend: React
-- Backend: FastAPI (Python)
-- Database: SQLite
-- AI/ML: Scikit-learn (TF-IDF + Logistic Regression)
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 19, React Router v7, Firebase Auth |
+| Backend | FastAPI, Python 3.11+ |
+| Database | SQLite |
+| ML/AI | scikit-learn (TF-IDF + LogisticRegression) |
+| Authentication | Firebase Email/Password + Email Verification |
+| Email Alerts | Resend API (SMTP fallback) |
+| Deployment | Vercel (frontend) + Render (backend) |
+| Security | PBKDF2 hashing, JWT sessions, rate limiting, security headers |
 
 ---
 
 ## 📸 Screenshots
 
-![Login](screenshots/USER.png)
+| User Portal | Admin Dashboard | CERT Command Center |
+|-------------|-----------------|---------------------|
+| ![User](screenshots/USER.png) | ![Admin](screenshots/ADMIN.png) | ![CERT](screenshots/CERT.png) |
 
 ---
 
-![Dashboard](screenshots/ADMIN.png)
+## 🔧 Local Development Setup
+
+See [LOCALHOST_SETUP.md](LOCALHOST_SETUP.md) for complete setup instructions.
+
+**Quick start:**
+
+```bash
+# Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+# Frontends (separate terminals)
+cd user-frontend  && npm install && npm start   # http://localhost:3000
+cd admin-frontend && npm install && npm start   # http://localhost:3001
+cd cert-frontend  && npm install && npm start   # http://localhost:3002
+```
+
+**Demo credentials:**
+
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | admin@rakshak.ai | admin123 |
+| CERT Officer | cert@rakshak.ai | cert123 |
 
 ---
 
-![CERT](screenshots/CERT.png)
+## 🔐 Security Features
+
+- Firebase Email Verification (users must verify before accessing portal)
+- PBKDF2-HMAC-SHA256 password hashing (120,000 iterations)
+- Session tokens (40-byte cryptographically secure random)
+- Rate limiting (30 req/60s per IP on auth endpoints)
+- Security headers middleware (X-Frame-Options, CSP, HSTS)
+- Input sanitization (XSS + SQL injection prevention)
+- Role-based access control (user / admin / cert)
+- Audit logging for all admin and CERT actions
 
 ---
 
-## 🔥 Real Problems I Faced
-- Model accuracy inconsistency
-- Handling real vs synthetic data
-- Securing API endpoints
-- Managing evidence uploads
+## 🧪 Testing
+
+```bash
+py -m pytest backend/tests/ -q
+# Expected: 166 passed
+```
 
 ---
 
-## ✅ How I Solved
-- Tuned TF-IDF + Logistic Regression
-- Balanced dataset (real + synthetic)
-- Added authentication & validation
-- Implemented structured storage for evidence
+## 🌟 Phase Roadmap
 
----
-
-## 💡 Why This Project
-Most cyber incident reporting systems are slow and manual.
-
-Rakshak AI aims to automate threat analysis and reduce response time using AI-powered decision support.
-
-This project was built to explore real-world applications of AI in cybersecurity.
-
----
-
-## 🌍 Live Demo
-Frontend can be deployed on Vercel. Backend can be hosted on Render.
-
-User - https://www.rakshakai.online
-Admin - https://admin.rakshakai.online
-Cert - https://cert.rakshakai.online
-
----
-
-## 🎯 Future Improvements
-- Deploy full system on AWS (EC2 + S3)
-- Add deep learning models
-- Integrate threat intelligence APIs
-- Real-time alerts & notifications
+- [x] Core complaint system + AI analysis
+- [x] Admin/CERT dashboards + analytics
+- [x] Campaign detection + heatmaps
+- [x] Firebase auth + email verification
+- [x] IOC extraction + severity explanation + mitigation steps
+- [x] Case notes + timeline + AI feedback
+- [x] Public awareness dashboard + HTML incident reports
+- [x] Mobile-first responsive UI + cross-browser compatibility
+- [ ] Deep learning model upgrade
+- [ ] Real-time WebSocket alerts
 
 ---
 
 ## 👨‍💻 Author
-Boomesh  
-Cloud Engineering Learner (AWS) | AI Developer
+
+**Boomesh** — Cloud Engineering | AI/ML Developer | Defence-Tech Enthusiast
+
+*Rakshak AI — Protecting those who protect the nation.*ssion) |
+
+**Boomesh**
+Cloud Engineering | AI/ML Developer | Defence-Tech Enthusiast
+
+---
+
+*Rakshak AI — Protecting those who protect the nation.*
+se 2 — Admin/CERT dashboards + analytics
+- [x] Phase 3 — Campaign detection + heatmaps
+- [x] Phase 4 — Firebase auth + email verification
+- [x] Phase 5 — IOC extraction + severity explanation + mitigation steps
+- [x] Phase 6 — Case notes + timeline + AI feedback
+- [x] Phase 7 — Public awareness dashboard + HTML incident reports
+- [x] Phase 8 — Mobile-first responsive UI + cross-browser compatibility
+- [ ] Phase 9 — Deep learning model upgrade
+- [ ] Phase 10 — Real-time WebSocket alerts
+
+---
+
+## 👨‍💻 Author
+
+# Expected: 166 passed
+```
+
+Test suites:
+- `test_audit.py` — Full API endpoint coverage (56 tests)
+- `test_health.py` — Health check endpoints
+- `test_phase1_features.py` — IOC, severity, mitigation (30 tests)
+- `test_phase2_features.py` — Notes, timeline, feedback (35 tests)
+- `test_phase3_features.py` — Public awareness, incident report (19 tests)
+- `test_ml_balance.py` — ML dataset balance and retrain safety (20 tests)
+
+---
+
+## 🌟 Phase Roadmap
+
+- [x] Phase 1 — Core complaint system + AI analysis
+- [x] Phain` | User login |
+| POST | `/complaints` | Submit complaint with evidence |
+| GET | `/my-complaints/{id}` | User's complaint history |
+| GET | `/admin/overview` | Admin dashboard data |
+| GET | `/cert/intel` | CERT intelligence feed |
+| GET | `/public/awareness` | Public anonymized statistics |
+| GET | `/admin/complaints/{id}/report` | HTML incident report |
+
+Full API documentation: https://ai-cyber-safety-portal-defence.onrender.com/docs
+
+---
+
+## 🧪 Testing
+
+```bash
+cd rakshak-ai
+py -m pytest backend/tests/ -qimiting (30 req/60s per IP on auth endpoints)
+- Security headers middleware (X-Frame-Options, CSP, HSTS)
+- Input sanitization (XSS + SQL injection prevention)
+- Evidence file hash verification (SHA-256)
+- Role-based access control (user / admin / cert)
+- Audit logging for all admin/CERT actions
+
+---
+
+## 📊 API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check (UptimeRobot compatible) |
+| POST | `/register` | User registration |
+| POST | `/logrt  # http://localhost:3001
+
+# CERT Frontend
+cd cert-frontend && npm install && npm start   # http://localhost:3002
+```
+
+**Demo credentials:**
+| Role | Email | Password |
+|------|-------|----------|
+| Admin | admin@rakshak.ai | admin123 |
+| CERT Officer | cert@rakshak.ai | cert123 |
+
+---
+
+## 🔐 Security Features
+
+- Firebase Email Verification (users must verify before accessing portal)
+- PBKDF2-HMAC-SHA256 password hashing (120,000 iterations)
+- Session tokens (40-byte cryptographically secure random)
+- Rate lots/CERT.png) |
+
+---
+
+## 🔧 Local Development Setup
+
+See [LOCALHOST_SETUP.md](LOCALHOST_SETUP.md) for complete setup instructions.
+
+**Quick start:**
+
+```bash
+# Backend
+cd backend
+python -m venv venv
+venv\Scripts\activate          # Windows
+# source venv/bin/activate     # Mac/Linux
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+
+# User Frontend
+cd user-frontend && npm install && npm start   # http://localhost:3000
+
+# Admin Frontend
+cd admin-frontend && npm install && npm sta| Authentication | Firebase Email/Password + Email Verification |
+| Email Alerts | Resend API (SMTP fallback) |
+| Deployment | Vercel (frontend) + Render (backend) |
+| Security | PBKDF2 password hashing, JWT sessions, rate limiting, security headers |
+
+---
+
+## 📸 Screenshots
+
+| User Portal | Admin Dashboard | CERT Command Center |
+|-------------|-----------------|---------------------|
+| ![User](screenshots/USER.png) | ![Admin](screenshots/ADMIN.png) | ![CERT](screensh
