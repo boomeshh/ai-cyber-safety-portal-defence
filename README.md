@@ -106,7 +106,15 @@ User Browser
 
 | User Portal | Admin Dashboard | CERT Command Center |
 |-------------|-----------------|---------------------|
-| ![User](screenshots/USER.png) | ![Admin](screenshots/ADMIN.png) | ![CERT](screenshots/CERT.png) |
+| ![User Login](screenshots/USER%20LOGIN.png) | ![Admin Dashboard](screenshots/ADMIN%20DASHBOARD.png) | ![CERT](screenshots/COMMAND%20CENTER%20DASHBOARD.png) |
+
+| Register | Submit Complaint | Verify Email |
+|----------|-----------------|--------------|
+| ![Register](screenshots/USER%20CREATE%20ACCOUNT.png) | ![Submit](screenshots/Sumbit%20Complaint.png) | ![Verify](screenshots/VERFIY%20MAIL.png) |
+
+| Complaint Result | Heatmap Intelligence | Campaign Clusters |
+|-----------------|---------------------|-------------------|
+| ![Result](screenshots/COMPLAINT%20SUMBITED%20SUCCESSFULLY.png) | ![Heatmap](screenshots/HAETMAP%20IN%20CERT.png) | ![Campaign](screenshots/CAMPAGAIN%20CLUSTER%20CERT.png) |
 
 ---
 
