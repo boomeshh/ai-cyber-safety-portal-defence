@@ -212,6 +212,12 @@ export default function AdminDashboard() {
   const [riskFilter, setRiskFilter] = useState('All');
   const [evidenceError, setEvidenceError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 10;
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [userPage, setUserPage] = useState(1);
+  const USER_PAGE_SIZE = 10;
 
   const loadDashboardData = async () => {
     try {
@@ -253,8 +259,39 @@ export default function AdminDashboard() {
 
   const filteredComplaints = useMemo(() => {
     const complaints = overview?.complaints || [];
-    return complaints.filter((item) => (statusFilter === 'All' || item.status === statusFilter) && (riskFilter === 'All' || item.risk_level === riskFilter));
-  }, [overview, statusFilter, riskFilter]);
+    const q = searchQuery.trim().toLowerCase();
+    return complaints.filter((item) => {
+      const matchesFilters = (statusFilter === 'All' || item.status === statusFilter) && (riskFilter === 'All' || item.risk_level === riskFilter);
+      if (!matchesFilters) return false;
+      if (!q) return true;
+      return [item.id, item.user_name, item.threat_type, item.risk_level, item.attack_channel].some((f) => String(f ?? '').toLowerCase().includes(q));
+    });
+  }, [overview, statusFilter, riskFilter, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredComplaints.length / PAGE_SIZE));
+  const pagedComplaints = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredComplaints.slice(start, start + PAGE_SIZE);
+  }, [filteredComplaints, currentPage]);
+
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, statusFilter, riskFilter]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
+
+  const filteredUsers = useMemo(() => {
+    const allUsers = overview?.users || [];
+    const q = userSearchQuery.trim().toLowerCase();
+    if (!q) return allUsers;
+    return allUsers.filter((person) => [person.full_name, person.email, person.role].some((f) => String(f ?? '').toLowerCase().includes(q)));
+  }, [overview, userSearchQuery]);
+
+  const userTotalPages = Math.max(1, Math.ceil(filteredUsers.length / USER_PAGE_SIZE));
+  const pagedUsers = useMemo(() => {
+    const start = (userPage - 1) * USER_PAGE_SIZE;
+    return filteredUsers.slice(start, start + USER_PAGE_SIZE);
+  }, [filteredUsers, userPage]);
+
+  useEffect(() => { setUserPage(1); }, [userSearchQuery]);
+  useEffect(() => { if (userPage > userTotalPages) setUserPage(userTotalPages); }, [userPage, userTotalPages]);
 
   if (!user || user.role !== 'admin') return <LoginGate onLogin={setUser} />;
   if (loading) return <div className="loading-screen"><h2>Loading Admin Control Room...</h2></div>;
@@ -262,7 +299,6 @@ export default function AdminDashboard() {
 
   const analytics = overview?.analytics || {};
   const auditLogs = overview?.audit_logs || [];
-  const users = overview?.users || [];
   const graph = overview?.campaign_graph;
 
   return (
@@ -282,8 +318,8 @@ export default function AdminDashboard() {
       </div>
 
       <div className="panel" style={{ marginTop: 22 }}>
-        <div className="panel-header"><h2>Complaint Queue</h2><div style={{ display: 'flex', gap: 10 }}><select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} style={inputStyle}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}><option>All</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}</select></div></div>
-        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th><th>Detail</th></tr></thead><tbody>{filteredComplaints.map((item) => (<>
+        <div className="panel-header"><h2>Complaint Queue</h2><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><input type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search Complaint ID, User, Threat..." style={{ ...inputStyle, minWidth: 260 }} /><select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} style={inputStyle}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option></select><select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={inputStyle}><option>All</option>{statusOptions.map((s) => <option key={s}>{s}</option>)}</select></div></div>
+        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>ID</th><th>User</th><th>Threat</th><th>Risk</th><th>Channel</th><th>Linked</th><th>Evidence</th><th>Status</th><th>Date</th><th>Detail</th></tr></thead><tbody>{filteredComplaints.length === 0 ? (<tr><td colSpan={10} style={{ textAlign: 'center', color: '#94a3b8', padding: '24px' }}>No complaints found</td></tr>) : pagedComplaints.map((item) => (<>
           <tr key={item.id}><td>{item.id}</td><td>{item.user_name}<div style={{ color: '#94a3b8', fontSize: 12 }}>{item.category}</div></td><td>{item.threat_type}</td><td><span className={getRiskBadgeClass(item.risk_level)}>{item.risk_level} · {item.risk_score}</span></td><td>{item.attack_channel || 'Unknown'}</td><td>{item.linked_case_count || 0}</td><td>{item.evidence_name ? <button onClick={() => openEvidence(item.id)} className="text-link" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Open</button> : '-'}</td><td><select value={item.status} onChange={(e) => handleStatusChange(item.id, e.target.value)} style={inputStyle}>{statusOptions.map((status) => <option key={status}>{status}</option>)}</select></td><td>{item.created_at}</td>
           <td><button onClick={() => setExpandedId(expandedId === item.id ? null : item.id)} style={{ background: 'none', border: '1px solid #334155', borderRadius: 6, color: '#94a3b8', cursor: 'pointer', padding: '4px 8px', fontSize: 12 }}>{expandedId === item.id ? '▲' : '▼'}</button></td></tr>
           {expandedId === item.id ? (
@@ -292,6 +328,18 @@ export default function AdminDashboard() {
             </td></tr>
           ) : null}
         </>))}</tbody></table></div>
+        {filteredComplaints.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
+            <div style={{ color: '#94a3b8', fontSize: 14 }}>Showing {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredComplaints.length)} of {filteredComplaints.length} records</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1} style={{ ...pageBtnStyle, opacity: currentPage === 1 ? 0.4 : 1, cursor: currentPage === 1 ? 'not-allowed' : 'pointer' }}>{'< Prev'}</button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <button key={page} onClick={() => setCurrentPage(page)} style={page === currentPage ? activePageBtnStyle : pageBtnStyle}>{page}</button>
+              ))}
+              <button onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} style={{ ...pageBtnStyle, opacity: currentPage === totalPages ? 0.4 : 1, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer' }}>{'Next >'}</button>
+            </div>
+          </div>
+        )}
         {evidenceError && <div style={{ color: '#fca5a5', marginTop: 8 }}>{evidenceError}</div>}
       </div>
 
@@ -300,7 +348,22 @@ export default function AdminDashboard() {
         <div className="panel"><div className="panel-header"><h2>Recent Audit Trail</h2></div><div className="list-wrap">{auditLogs.map((log) => <div key={log.id} className="incident-card"><div className="incident-top"><strong>{log.action}</strong><span style={{ color: '#93c5fd', fontSize: 12 }}>{log.created_at}</span></div><p><strong>Actor:</strong> {log.actor_name || 'system'} ({log.actor_role || 'system'})</p><p><strong>Target:</strong> {log.target_type} {log.target_id || '-'}</p>{log.old_value || log.new_value ? <p><strong>Change:</strong> {log.old_value || '-'} → {log.new_value || '-'}</p> : null}{log.details ? <p><strong>Details:</strong> {log.details}</p> : null}</div>)}</div></div>
       </div>
 
-      <div className="panel" style={{ marginTop: 22 }}><div className="panel-header"><h2>Registered Users</h2></div><div className="table-wrap"><table className="complaints-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead><tbody>{users.map((person) => <tr key={person.id}><td>{person.full_name}</td><td>{person.email}</td><td>{person.role}</td><td>{person.created_at}</td></tr>)}</tbody></table></div></div>
+      <div className="panel" style={{ marginTop: 22 }}>
+        <div className="panel-header"><h2>Registered Users</h2><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><input type="text" value={userSearchQuery} onChange={(e) => setUserSearchQuery(e.target.value)} placeholder="Search Name, Email, Role..." style={{ ...inputStyle, minWidth: 260 }} /></div></div>
+        <div className="table-wrap"><table className="complaints-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead><tbody>{filteredUsers.length === 0 ? (<tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: '24px' }}>No users found</td></tr>) : pagedUsers.map((person) => <tr key={person.id}><td>{person.full_name}</td><td>{person.email}</td><td>{person.role}</td><td>{person.created_at}</td></tr>)}</tbody></table></div>
+        {filteredUsers.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
+            <div style={{ color: '#94a3b8', fontSize: 14 }}>Showing {(userPage - 1) * USER_PAGE_SIZE + 1}–{Math.min(userPage * USER_PAGE_SIZE, filteredUsers.length)} of {filteredUsers.length} users</div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              <button onClick={() => setUserPage((p) => Math.max(1, p - 1))} disabled={userPage === 1} style={{ ...pageBtnStyle, opacity: userPage === 1 ? 0.4 : 1, cursor: userPage === 1 ? 'not-allowed' : 'pointer' }}>{'< Prev'}</button>
+              {Array.from({ length: userTotalPages }, (_, i) => i + 1).map((page) => (
+                <button key={page} onClick={() => setUserPage(page)} style={page === userPage ? activePageBtnStyle : pageBtnStyle}>{page}</button>
+              ))}
+              <button onClick={() => setUserPage((p) => Math.min(userTotalPages, p + 1))} disabled={userPage === userTotalPages} style={{ ...pageBtnStyle, opacity: userPage === userTotalPages ? 0.4 : 1, cursor: userPage === userTotalPages ? 'not-allowed' : 'pointer' }}>{'Next >'}</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -309,3 +372,5 @@ function StatCard({ label, value, tone }) { return <div className={`stat-card ${
 
 const inputStyle = { background: '#0f172a', color: 'white', border: '1px solid #334155', borderRadius: 10, padding: '10px 12px' };
 const buttonStyle = { background: 'linear-gradient(135deg, #f59e0b, #f97316)', color: '#081120', border: 'none', borderRadius: 10, padding: '10px 14px', cursor: 'pointer', fontWeight: 700 };
+const pageBtnStyle = { background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontSize: 14, fontWeight: 600, minWidth: 40 };
+const activePageBtnStyle = { ...pageBtnStyle, background: '#1e40af', borderColor: '#1e40af', color: 'white', cursor: 'default' };
