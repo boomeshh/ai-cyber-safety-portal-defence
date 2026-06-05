@@ -87,6 +87,15 @@ export default function App() {
   const [training, setTraining] = useState(false);
   const [trainResult, setTrainResult] = useState(null);
 
+  // Mobile-only collapsible intelligence panels (desktop ignores these)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches);
+  const [showModel, setShowModel] = useState(false);
+  const [showHeatmap, setShowHeatmap] = useState(false);
+  const [showClusters, setShowClusters] = useState(false);
+  const [showLiveAlerts, setShowLiveAlerts] = useState(false);
+  const [showRepeated, setShowRepeated] = useState(false);
+  const [showIncidentFeed, setShowIncidentFeed] = useState(false);
+
   const loadData = async () => {
     try {
       const res = await fetch(`${API}/cert/intel`, { headers: getAuthHeaders() });
@@ -149,6 +158,13 @@ export default function App() {
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, [user]);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 768px)');
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   const summary = intel?.summary;
   const analytics = intel?.analytics;
@@ -271,7 +287,7 @@ export default function App() {
         {/* ── Model Intelligence Panel ── */}
         <div className="panel" style={{ marginBottom: 24 }}>
           <div className="panel-header">
-            <h2>Model Intelligence</h2>
+            <PanelHeading title="Model Intelligence" isMobile={isMobile} open={showModel} onToggle={() => setShowModel((v) => !v)} />
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span className={`panel-tag ${modelInfo?.model_exists ? '' : 'red-tag'}`}>
                 {modelInfo?.model_exists ? '✓ Hybrid Active (TF-IDF + LogisticRegression)' : '⚠ Rule fallback enabled for safety'}
@@ -284,6 +300,7 @@ export default function App() {
               )}
             </div>
           </div>
+          {(!isMobile || showModel) && (<>
           <div className="model-grid">
             <ModelStat label="Algorithm" value={modelInfo?.algorithm || 'LogisticRegression'} />
             <ModelStat
@@ -339,15 +356,17 @@ export default function App() {
               )}
             </div>
           )}
+          </>)}
         </div>
 
         {/* ── Heatmap Intelligence Panel ── */}
         <div className="panel heatmap-panel" style={{ marginBottom: 24 }}>
           <div className="panel-header">
-            <h2>Heatmap Intelligence</h2>
+            <PanelHeading title="Heatmap Intelligence" isMobile={isMobile} open={showHeatmap} onToggle={() => setShowHeatmap((v) => !v)} />
             <span className="panel-tag amber-tag">Threat Patterns</span>
           </div>
 
+          {(!isMobile || showHeatmap) && (<>
           {/* Row 1: Hour vs Day — full width, scrollable internally */}
           <div className="heatmap-row-full">
             <Heatmap
@@ -377,6 +396,7 @@ export default function App() {
               />
             </div>
           </div>
+          </>)}
         </div>
 
         {/* ── Trend + Distributions ── */}
@@ -424,9 +444,10 @@ export default function App() {
         {campaignClusters.length > 0 && (
           <div className="panel" style={{ marginBottom: 24 }}>
             <div className="panel-header">
-              <h2>Campaign Clusters</h2>
+              <PanelHeading title="Campaign Clusters" isMobile={isMobile} open={showClusters} onToggle={() => setShowClusters((v) => !v)} />
               <span className="panel-tag amber-tag">{campaignClusters.length} cluster{campaignClusters.length !== 1 ? 's' : ''}</span>
             </div>
+            {(!isMobile || showClusters) && (
             <div className="cluster-grid">
               {campaignClusters.map((c, i) => (
                 <div key={i} className={`cluster-card ${c.dominant_risk_level === 'Critical' ? 'cluster-critical' : ''}`}>
@@ -448,6 +469,7 @@ export default function App() {
                 </div>
               ))}
             </div>
+            )}
           </div>
         )}
 
@@ -455,15 +477,17 @@ export default function App() {
         <div className="bottom-grid" style={{ marginBottom: 24 }}>
           <div className="panel">
             <div className="panel-header">
-              <h2>Live Critical Alerts</h2>
+              <PanelHeading title="Live Critical Alerts" isMobile={isMobile} open={showLiveAlerts} onToggle={() => setShowLiveAlerts((v) => !v)} />
               <span className="panel-tag red-tag">{feed?.live_alerts?.length || 0}</span>
             </div>
+            {(!isMobile || showLiveAlerts) && (
             <div className="list-wrap">
               {(feed?.live_alerts || []).length === 0
                 ? <div className="empty-state">No critical alerts.</div>
                 : feed.live_alerts.map((item) => <IncidentCard key={item.id} item={item} />)
               }
             </div>
+            )}
           </div>
           <div className="panel">
             <div className="panel-header">
@@ -483,15 +507,17 @@ export default function App() {
         <div className="bottom-grid" style={{ marginBottom: 24 }}>
           <div className="panel">
             <div className="panel-header">
-              <h2>Repeated Campaign Indicators</h2>
+              <PanelHeading title="Repeated Campaign Indicators" isMobile={isMobile} open={showRepeated} onToggle={() => setShowRepeated((v) => !v)} />
               <span className="panel-tag amber-tag">Intel</span>
             </div>
+            {(!isMobile || showRepeated) && (
             <div className="list-wrap">
               {(feed?.repeated_cases || []).length === 0
                 ? <div className="empty-state">No linked campaign patterns yet.</div>
                 : feed.repeated_cases.map((item) => <IncidentCard key={item.id} item={item} campaign />)
               }
             </div>
+            )}
           </div>
           <div className="panel">
             <div className="panel-header">
@@ -510,9 +536,16 @@ export default function App() {
         {/* ── Recent Incident Feed ── */}
         <div className="panel recent-panel">
           <div className="panel-header">
-            <h2>Recent Incident Feed</h2>
+            <PanelHeading title="Recent Incident Feed" isMobile={isMobile} open={showIncidentFeed} onToggle={() => setShowIncidentFeed((v) => !v)} />
             <span className="panel-tag">Live Feed</span>
           </div>
+          {(!isMobile || showIncidentFeed) && (isMobile ? (
+            <div className="list-wrap">
+              {(feed?.recent_cases || []).length === 0
+                ? <div className="empty-state">No recent incidents.</div>
+                : feed.recent_cases.map((item) => <FeedCard key={item.id} item={item} />)}
+            </div>
+          ) : (
           <div className="table-wrap">
             <table className="mini-table">
               <thead>
@@ -537,6 +570,7 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          ))}
         </div>
 
       </div>
@@ -545,6 +579,33 @@ export default function App() {
 }
 
 // ─── Sub-components ─────────────────────────────────────────────────────────
+
+// Desktop: plain heading. Mobile: tappable toggle with ▶/▼ arrow.
+function PanelHeading({ title, isMobile, open, onToggle }) {
+  if (!isMobile) return <h2>{title}</h2>;
+  return (
+    <button type="button" className="panel-toggle" onClick={onToggle}>
+      {open ? '▼' : '▶'} {title}
+    </button>
+  );
+}
+
+// Mobile-only compact card for the Recent Incident Feed (desktop keeps the table).
+function FeedCard({ item }) {
+  return (
+    <div className="incident-card">
+      <div className="incident-top">
+        <strong>{item.id}</strong>
+        <span className={getRiskClass(item.risk_level)}>{item.risk_level}</span>
+      </div>
+      <p><strong>Threat:</strong> {item.threat_type}</p>
+      <p><strong>User:</strong> {item.user_name}</p>
+      <p><strong>ML Type:</strong> {item.ml_predicted_type || item.ml_prediction || '—'}</p>
+      <p><strong>Confidence:</strong> {item.ai_confidence != null ? `${item.ai_confidence}%` : '—'}</p>
+      <p><strong>Status:</strong> {item.status} &nbsp;·&nbsp; <strong>Channel:</strong> {item.attack_channel || 'Unknown'}</p>
+    </div>
+  );
+}
 
 function SummaryCard({ label, value, critical, text }) {
   return (
