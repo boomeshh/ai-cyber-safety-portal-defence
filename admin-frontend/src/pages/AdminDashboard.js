@@ -218,6 +218,9 @@ export default function AdminDashboard() {
   const [userSearchQuery, setUserSearchQuery] = useState('');
   const [userPage, setUserPage] = useState(1);
   const USER_PAGE_SIZE = 10;
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches);
+  const [collapsed, setCollapsed] = useState({ campaign: true, audit: true, users: true });
+  const toggleSection = (key) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
 
   const loadDashboardData = async () => {
     try {
@@ -293,6 +296,13 @@ export default function AdminDashboard() {
   useEffect(() => { setUserPage(1); }, [userSearchQuery]);
   useEffect(() => { if (userPage > userTotalPages) setUserPage(userTotalPages); }, [userPage, userTotalPages]);
 
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)');
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   if (!user || user.role !== 'admin') return <LoginGate onLogin={setUser} />;
   if (loading) return <div className="loading-screen"><h2>Loading Admin Control Room...</h2></div>;
   if (error) return <div className="dashboard-shell" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><div className="panel" style={{ maxWidth: 520 }}><h2>Admin dashboard unavailable</h2><p style={{ color: '#cbd5e1' }}>{error}</p><button style={buttonStyle} onClick={loadDashboardData}>Retry</button></div></div>;
@@ -344,12 +354,13 @@ export default function AdminDashboard() {
       </div>
 
       <div className="dashboard-grid" style={{ marginTop: 22 }}>
-        <div className="panel"><div className="panel-header"><h2>Campaign Intelligence</h2></div>{graph?.nodes?.length ? <div className="graph-grid">{graph.nodes.map((node) => <div key={node.id} className={`graph-node ${node.kind}`}><div className="graph-kind">{node.kind}</div><div className="graph-label">{node.label}</div></div>)}<div className="graph-edge-list"><strong>Links</strong>{graph.edges.map((edge, i) => <div key={i} className="edge-item">{edge.source.slice(0, 18)} → {edge.target.slice(0, 18)} <span>{edge.label}</span></div>)}</div></div> : <p style={{ color: '#94a3b8' }}>No repeated campaign graph yet.</p>}</div>
-        <div className="panel"><div className="panel-header"><h2>Recent Audit Trail</h2></div><div className="list-wrap">{auditLogs.map((log) => <div key={log.id} className="incident-card"><div className="incident-top"><strong>{log.action}</strong><span style={{ color: '#93c5fd', fontSize: 12 }}>{log.created_at}</span></div><p><strong>Actor:</strong> {log.actor_name || 'system'} ({log.actor_role || 'system'})</p><p><strong>Target:</strong> {log.target_type} {log.target_id || '-'}</p>{log.old_value || log.new_value ? <p><strong>Change:</strong> {log.old_value || '-'} → {log.new_value || '-'}</p> : null}{log.details ? <p><strong>Details:</strong> {log.details}</p> : null}</div>)}</div></div>
+        <div className="panel"><div className="panel-header">{isMobile ? <button onClick={() => toggleSection('campaign')} style={toggleHeaderStyle}>{collapsed.campaign ? '▶' : '▼'} Campaign Intelligence</button> : <h2>Campaign Intelligence</h2>}</div>{(!isMobile || !collapsed.campaign) && (graph?.nodes?.length ? <div className="graph-grid">{graph.nodes.map((node) => <div key={node.id} className={`graph-node ${node.kind}`}><div className="graph-kind">{node.kind}</div><div className="graph-label">{node.label}</div></div>)}<div className="graph-edge-list"><strong>Links</strong>{graph.edges.map((edge, i) => <div key={i} className="edge-item">{edge.source.slice(0, 18)} → {edge.target.slice(0, 18)} <span>{edge.label}</span></div>)}</div></div> : <p style={{ color: '#94a3b8' }}>No repeated campaign graph yet.</p>)}</div>
+        <div className="panel"><div className="panel-header">{isMobile ? <button onClick={() => toggleSection('audit')} style={toggleHeaderStyle}>{collapsed.audit ? '▶' : '▼'} Recent Audit Trail</button> : <h2>Recent Audit Trail</h2>}</div>{(!isMobile || !collapsed.audit) && <div className="list-wrap">{auditLogs.map((log) => <div key={log.id} className="incident-card"><div className="incident-top"><strong>{log.action}</strong><span style={{ color: '#93c5fd', fontSize: 12 }}>{log.created_at}</span></div><p><strong>Actor:</strong> {log.actor_name || 'system'} ({log.actor_role || 'system'})</p><p><strong>Target:</strong> {log.target_type} {log.target_id || '-'}</p>{log.old_value || log.new_value ? <p><strong>Change:</strong> {log.old_value || '-'} → {log.new_value || '-'}</p> : null}{log.details ? <p><strong>Details:</strong> {log.details}</p> : null}</div>)}</div>}</div>
       </div>
 
       <div className="panel" style={{ marginTop: 22 }}>
-        <div className="panel-header"><h2>Registered Users</h2><div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><input type="text" value={userSearchQuery} onChange={(e) => setUserSearchQuery(e.target.value)} placeholder="Search Name, Email, Role..." style={{ ...inputStyle, minWidth: 260 }} /></div></div>
+        <div className="panel-header">{isMobile ? <button onClick={() => toggleSection('users')} style={toggleHeaderStyle}>{collapsed.users ? '▶' : '▼'} Registered Users</button> : <h2>Registered Users</h2>}{(!isMobile || !collapsed.users) && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}><input type="text" value={userSearchQuery} onChange={(e) => setUserSearchQuery(e.target.value)} placeholder="Search Name, Email, Role..." style={{ ...inputStyle, minWidth: 260 }} /></div>}</div>
+        {(!isMobile || !collapsed.users) && (<>
         <div className="table-wrap"><table className="complaints-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Created</th></tr></thead><tbody>{filteredUsers.length === 0 ? (<tr><td colSpan={4} style={{ textAlign: 'center', color: '#94a3b8', padding: '24px' }}>No users found</td></tr>) : pagedUsers.map((person) => <tr key={person.id}><td>{person.full_name}</td><td>{person.email}</td><td>{person.role}</td><td>{person.created_at}</td></tr>)}</tbody></table></div>
         {filteredUsers.length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
@@ -363,6 +374,7 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
+        </>)}
       </div>
     </div>
   );
@@ -373,4 +385,5 @@ function StatCard({ label, value, tone }) { return <div className={`stat-card ${
 const inputStyle = { background: '#0f172a', color: 'white', border: '1px solid #334155', borderRadius: 10, padding: '10px 12px' };
 const buttonStyle = { background: 'linear-gradient(135deg, #f59e0b, #f97316)', color: '#081120', border: 'none', borderRadius: 10, padding: '10px 14px', cursor: 'pointer', fontWeight: 700 };
 const pageBtnStyle = { background: '#0f172a', color: '#e2e8f0', border: '1px solid #334155', borderRadius: 8, padding: '8px 12px', cursor: 'pointer', fontSize: 14, fontWeight: 600, minWidth: 40 };
+const toggleHeaderStyle = { display: 'flex', alignItems: 'center', gap: 8, width: '100%', background: 'none', border: 'none', color: '#e2e8f0', fontSize: '1.1rem', fontWeight: 700, cursor: 'pointer', padding: 0, textAlign: 'left' };
 const activePageBtnStyle = { ...pageBtnStyle, background: '#1e40af', borderColor: '#1e40af', color: 'white', cursor: 'default' };
