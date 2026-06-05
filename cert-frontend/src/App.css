@@ -575,3 +575,47 @@ body {
   border-color: rgba(220, 38, 38, 0.4) !important;
   box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.1);
 }
+
+/* ── Mobile responsiveness: collapsible intelligence panels ──────────────── */
+
+/* Toggle button rendered in place of <h2> on mobile — matches heading look */
+.panel-toggle {
+  background: none;
+  border: none;
+  color: #f8fafc;
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.2;
+}
+
+@media (max-width: 768px) {
+  /* TASK 2 — summary cards in a 2-column grid on mobile */
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px;
+  }
+
+  .panel-toggle {
+    font-size: 1.15rem;
+  }
+
+  /* Tighten panels and prevent horizontal overflow on small screens */
+  .panel {
+    padding: 16px;
+  }
+
+  .panel-header {
+    gap: 10px;
+  }
+
+  .cluster-grid {
+    grid-template-columns: 1fr;
+  }
+}
