@@ -6,11 +6,25 @@ import { getStoredUser } from "../utils/auth";
 
 const API = process.env.REACT_APP_API_BASE_URL || "https://ai-cyber-safety-portal-defence.onrender.com";
 
+const eyeButtonStyle = {
+  position: "absolute",
+  right: 8,
+  top: "50%",
+  transform: "translateY(-50%)",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: 4,
+  fontSize: 16,
+  lineHeight: 1,
+};
+
 export default function Login() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
 
   useEffect(() => {
     const user = getStoredUser();
@@ -101,14 +115,25 @@ export default function Login() {
             onChange={(e) => { setForm({ ...form, email: e.target.value }); setError(""); }}
             required
           />
-          <input
-            type="password"
-            placeholder="Password"
-            value={form.password}
-            autoComplete="current-password"
-            onChange={(e) => { setForm({ ...form, password: e.target.value }); setError(""); }}
-            required
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              type={showLoginPassword ? "text" : "password"}
+              placeholder="Password"
+              value={form.password}
+              autoComplete="current-password"
+              onChange={(e) => { setForm({ ...form, password: e.target.value }); setError(""); }}
+              required
+              style={{ paddingRight: 42 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowLoginPassword((v) => !v)}
+              aria-label={showLoginPassword ? "Hide password" : "Show password"}
+              style={eyeButtonStyle}
+            >
+              {showLoginPassword ? "🙈" : "👁️"}
+            </button>
+          </div>
           <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
             {loading ? <><span className="spinner" /> Authenticating...</> : "🔐 Login"}
           </button>

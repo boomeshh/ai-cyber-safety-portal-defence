@@ -5,12 +5,27 @@ import { auth } from "../firebase";
 
 const API = process.env.REACT_APP_API_BASE_URL || "https://ai-cyber-safety-portal-defence.onrender.com";
 
+const eyeButtonStyle = {
+  position: "absolute",
+  right: 8,
+  top: "50%",
+  transform: "translateY(-50%)",
+  background: "none",
+  border: "none",
+  cursor: "pointer",
+  padding: 4,
+  fontSize: 16,
+  lineHeight: 1,
+};
+
 export default function Register() {
   const navigate = useNavigate();
   const [form, setForm] = useState({ full_name: "", email: "", password: "", confirm_password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const validate = () => {
     if (!form.full_name.trim()) return "Full name is required.";
@@ -117,16 +132,26 @@ export default function Register() {
             required
           />
           <div>
-            <input
-              type="password"
-              placeholder="Create password (min 6 chars)"
-              minLength="6"
-              value={form.password}
-              autoComplete="new-password"
-              onChange={(e) => { setForm({ ...form, password: e.target.value }); setError(""); }}
-              required
-              style={{ marginBottom: form.password ? 6 : 0 }}
-            />
+            <div style={{ position: "relative", marginBottom: form.password ? 6 : 0 }}>
+              <input
+                type={showSignupPassword ? "text" : "password"}
+                placeholder="Create password (min 6 chars)"
+                minLength="6"
+                value={form.password}
+                autoComplete="new-password"
+                onChange={(e) => { setForm({ ...form, password: e.target.value }); setError(""); }}
+                required
+                style={{ paddingRight: 42 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowSignupPassword((v) => !v)}
+                aria-label={showSignupPassword ? "Hide password" : "Show password"}
+                style={eyeButtonStyle}
+              >
+                {showSignupPassword ? "🙈" : "👁️"}
+              </button>
+            </div>
             {form.password.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
                 <div style={{ flex: 1, height: 3, borderRadius: 99, background: '#1e293b', overflow: 'hidden' }}>
@@ -136,15 +161,26 @@ export default function Register() {
               </div>
             )}
           </div>
-          <input
-            type="password"
-            placeholder="Confirm password"
-            minLength="6"
-            value={form.confirm_password}
-            autoComplete="new-password"
-            onChange={(e) => { setForm({ ...form, confirm_password: e.target.value }); setError(""); }}
-            required
-          />
+          <div style={{ position: "relative" }}>
+            <input
+              type={showConfirmPassword ? "text" : "password"}
+              placeholder="Confirm password"
+              minLength="6"
+              value={form.confirm_password}
+              autoComplete="new-password"
+              onChange={(e) => { setForm({ ...form, confirm_password: e.target.value }); setError(""); }}
+              required
+              style={{ paddingRight: 42 }}
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword((v) => !v)}
+              aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+              style={eyeButtonStyle}
+            >
+              {showConfirmPassword ? "🙈" : "👁️"}
+            </button>
+          </div>
           <button className="btn" type="submit" disabled={loading} style={{ marginTop: 4 }}>
             {loading ? <><span className="spinner" /> Creating account...</> : "🔐 Create Account"}
           </button>
