@@ -144,6 +144,11 @@ export default function Login() {
           <span className="link-btn" onClick={() => navigate("/register")}>Create Account</span>
         </div>
 
+        <div style={{ marginTop: 12, textAlign: 'center', fontSize: 12, color: '#64748b' }}>
+          <div>Demo User ID: manii.lightroom@gmail.com</div>
+          <div>Demo Password: 12345678</div>
+        </div>
+
         <div style={{ marginTop: 20, padding: '10px 14px', background: 'rgba(56,189,248,0.05)', border: '1px solid rgba(56,189,248,0.12)', borderRadius: 10, textAlign: 'center' }}>
           <span style={{ color: '#64748b', fontSize: 12 }}>
             <span className="status-dot online" />

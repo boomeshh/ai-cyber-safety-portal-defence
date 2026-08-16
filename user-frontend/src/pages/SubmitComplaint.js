@@ -3,7 +3,7 @@ import { getAuthHeaders, getStoredUser } from "../utils/auth";
 
 const API = process.env.REACT_APP_API_BASE_URL || "https://ai-cyber-safety-portal-defence.onrender.com";
 
-const CATEGORIES = ["Serving Personnel", "Family Member", "Veteran"];
+const CATEGORIES = ["Individual / Citizen", "Family Member", "Employee / Professional"];
 
 function SubmitComplaint() {
   const user = getStoredUser();
