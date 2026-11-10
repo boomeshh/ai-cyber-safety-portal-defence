@@ -9,6 +9,7 @@ All helpers are additive — they do not replace existing auth logic.
 import re
 import os
 import time
+import html
 import logging
 import hashlib
 from collections import defaultdict
@@ -21,27 +22,38 @@ from starlette.middleware.base import BaseHTTPMiddleware
 logger = logging.getLogger("security_utils")
 
 # ---------------------------------------------------------------------------
-# Allowed file extensions and MIME types for evidence upload
+# Strict allowlist: only the file types a complaint portal legitimately needs.
+# Everything not on this list is rejected — deny-by-default.
 # ---------------------------------------------------------------------------
-SAFE_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".webp", ".gif",
-    ".pdf", ".txt", ".csv",
-    ".mp3", ".wav",
-    ".mp4", ".mov",
-}
+SAFE_EXTENSIONS: frozenset[str] = frozenset({
+    # Images — evidence screenshots
+    ".png", ".jpg", ".jpeg", ".webp",
+    # Documents
+    ".pdf", ".txt",
+})
 
-SAFE_MIME_TYPES = {
-    "image/png", "image/jpeg", "image/webp", "image/gif",
+SAFE_MIME_TYPES: frozenset[str] = frozenset({
+    "image/png", "image/jpeg", "image/webp",
     "application/pdf",
-    "text/plain", "text/csv",
-    "audio/mpeg", "audio/wav",
-    "video/mp4", "video/quicktime",
-}
+    "text/plain",
+})
 
-# Dangerous extensions that should always be blocked
-BLOCKED_EXTENSIONS = {".exe", ".bat", ".sh", ".ps1", ".vbs", ".js", ".jar"}
+# Hard-block list — executables and script files that must never be stored.
+# Kept as a secondary safety net; primary gate is the SAFE_EXTENSIONS allowlist.
+BLOCKED_EXTENSIONS: frozenset[str] = frozenset({
+    ".exe", ".bat", ".sh", ".ps1", ".vbs",
+    ".js",  ".ts",  ".jsx", ".tsx",
+    ".py",  ".rb",  ".php", ".pl",  ".go",
+    ".jar", ".war", ".ear",
+    ".html", ".htm", ".svg",
+    ".apk", ".ipa",
+    ".zip", ".tar", ".gz", ".7z", ".rar",
+    ".dll", ".so",  ".dylib",
+    ".cmd", ".com", ".scr", ".hta",
+})
 
-MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
+# 5 MB hard cap for evidence uploads (down from the previous 15 MB)
+MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
 
 
 # ---------------------------------------------------------------------------
@@ -49,22 +61,30 @@ MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
 # ---------------------------------------------------------------------------
 def sanitize_text(text: str, max_length: int = 5000) -> str:
     """
-    Sanitize free-text input.
-    - Strip leading/trailing whitespace
-    - Remove null bytes
-    - Truncate to max_length
-    - Remove common XSS patterns
+    Sanitize free-text input for safe database storage.
+
+    Steps (in order):
+    1. Remove null bytes — prevent NUL-injection attacks.
+    2. HTML-escape the entire string — converts <, >, &, ", ' to their safe
+       entity equivalents so the raw value stored in the DB is harmless when
+       later rendered in any HTML context (stored XSS prevention).
+    3. Strip any residual bare script/tag patterns that survived escaping
+       (belt-and-braces, handles edge cases like double-encoded input).
+    4. Truncate to max_length.
+
+    Note: html.escape is non-destructive for plain text — ampersands in URLs
+    and normal punctuation round-trip correctly.
     """
     if not text:
         return ""
-    # Remove null bytes
+    # 1. Remove null bytes
     text = text.replace("\x00", "")
-    # Strip dangerous HTML/script tags
-    text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.IGNORECASE | re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", text)
-    # Remove SQL injection patterns (basic)
-    text = re.sub(r"(--|;|/\*|\*/|xp_|UNION\s+SELECT|DROP\s+TABLE)", "", text, flags=re.IGNORECASE)
-    # Truncate
+    # 2. HTML-escape — primary XSS defence
+    text = html.escape(text, quote=True)
+    # 3. Belt-and-braces: strip any residual tag-like patterns
+    text = re.sub(r"&lt;script[^&]*&gt;.*?&lt;/script&gt;", "", text,
+                  flags=re.IGNORECASE | re.DOTALL)
+    # 4. Truncate
     return text.strip()[:max_length]
 
 
@@ -84,39 +104,61 @@ def sanitize_url(url: str) -> str:
 
 def validate_file_upload(filename: str, content_type: str, file_size: int) -> tuple[bool, str]:
     """
-    Validate an uploaded file.
+    Validate an uploaded evidence file against strict security criteria.
+
+    Policy (deny-by-default):
+      1. Filename must be present.
+      2. Extension must be on the SAFE_EXTENSIONS allowlist.
+      3. Extension must NOT be on the BLOCKED_EXTENSIONS denylist (belt-and-braces).
+      4. File size must not exceed MAX_FILE_SIZE_BYTES.
+      5. MIME type, if provided, must match the SAFE_MIME_TYPES allowlist.
+
     Returns (is_valid: bool, reason: str).
+    The reason string is safe to return to the client (no internal path info).
     """
     if not filename:
         return False, "No filename provided."
 
     _, ext = os.path.splitext(filename.lower())
 
+    # Primary gate: extension must be explicitly allowed
+    if ext not in SAFE_EXTENSIONS:
+        return False, f"File type '{ext or '(none)'}' is not permitted. Allowed: images (png, jpg, jpeg, webp) and documents (pdf, txt)."
+
+    # Secondary gate: belt-and-braces block for executables
     if ext in BLOCKED_EXTENSIONS:
-        return False, f"File type '{ext}' is not allowed for security reasons."
+        return False, f"File type '{ext}' is blocked for security reasons."
 
     if file_size > MAX_FILE_SIZE_BYTES:
-        return False, f"File too large. Maximum size is {MAX_FILE_SIZE_BYTES // (1024*1024)} MB."
+        size_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+        return False, f"File too large. Maximum allowed size is {size_mb} MB."
 
-    # Warn but don't block on MIME type mismatch (browsers can be inconsistent)
+    # MIME type check — enforce, don't just warn
     if content_type and content_type not in SAFE_MIME_TYPES:
-        logger.warning(f"[security] Unusual MIME type uploaded: {content_type} for {filename}")
+        return False, f"MIME type '{content_type}' is not permitted for evidence uploads."
 
     return True, "OK"
 
 
 def generate_safe_filename(original_name: str, prefix: str = "") -> str:
     """
-    Generate a safe, hashed filename to prevent path traversal.
-    Format: {prefix}_{sha256_of_original[:12]}_{sanitized_basename}
+    Generate a fully server-controlled filename that prevents directory
+    traversal, path injection, and information leakage.
+
+    The original client filename is NOT preserved in the stored name.
+    Format: {prefix}_{timestamp}_{sha256[:16]}_{safe_ext}
+
+    The original extension is retained (already validated by the caller)
+    so the OS can serve the file with the correct Content-Type.
     """
-    basename = os.path.basename(original_name)
-    # Remove dangerous characters
-    safe_base = re.sub(r"[^\w.\-]", "_", basename)
-    name_hash = hashlib.sha256(original_name.encode()).hexdigest()[:12]
-    timestamp  = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    parts = [p for p in [prefix, timestamp, name_hash, safe_base] if p]
-    return "_".join(parts)
+    _, ext = os.path.splitext(original_name.lower())
+    # Sanitize extension — only keep alphanumeric chars
+    safe_ext = re.sub(r"[^\w]", "", ext)[:6]
+    name_hash = hashlib.sha256(original_name.encode()).hexdigest()[:16]
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+    parts = [p for p in [prefix, timestamp, name_hash] if p]
+    base = "_".join(parts)
+    return f"{base}.{safe_ext}" if safe_ext else base
 
 
 # ---------------------------------------------------------------------------

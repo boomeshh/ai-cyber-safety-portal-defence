@@ -7,3 +7,4 @@ pydantic[email]
 scikit-learn
 python-dotenv
 resend
+firebase-admin

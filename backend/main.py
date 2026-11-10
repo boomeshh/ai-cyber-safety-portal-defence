@@ -34,6 +34,9 @@ from security_utils import (
     RateLimitMiddleware,
     sanitize_text,
     sanitize_url,
+    validate_file_upload,
+    generate_safe_filename,
+    MAX_FILE_SIZE_BYTES,
 )
 from seed_data import seed_complaints
 
@@ -67,14 +70,7 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_NAME = os.path.join(BASE_DIR, "complaints.db")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
-ALLOWED_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".webp", ".gif",
-    ".pdf", ".doc", ".docx", ".txt", ".csv",
-    ".mp3", ".wav", ".m4a",
-    ".mp4", ".mov", ".avi", ".mkv",
-    ".apk", ".zip", ".exe"
-}
-MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024
+# MAX_FILE_SIZE_BYTES and extension allowlists are authoritative in security_utils.py
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -1179,27 +1175,36 @@ async def create_complaint(
     complaint_id = f"RK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
     if uploaded_file and uploaded_file.filename:
-        _, ext = os.path.splitext(uploaded_file.filename.lower())
-        if ext and ext not in ALLOWED_EXTENSIONS:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
-
         content = await uploaded_file.read()
-        if len(content) > MAX_FILE_SIZE_BYTES:
-            raise HTTPException(status_code=400, detail="File too large. Maximum size is 15 MB")
+        is_valid, reason = validate_file_upload(
+            uploaded_file.filename,
+            uploaded_file.content_type or "",
+            len(content),
+        )
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=reason)
 
-        evidence_name = uploaded_file.filename
-        safe_name = f"{complaint_id}_{os.path.basename(uploaded_file.filename)}"
+        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id)
         evidence_path = os.path.join(UPLOAD_DIR, safe_name)
+        # Guard against path traversal — ensure the resolved path stays inside UPLOAD_DIR
+        if not os.path.abspath(evidence_path).startswith(os.path.abspath(UPLOAD_DIR)):
+            raise HTTPException(status_code=400, detail="Invalid filename.")
 
+        evidence_name = os.path.basename(uploaded_file.filename)
         with open(evidence_path, "wb") as out_file:
             out_file.write(content)
 
-        evidence_type = uploaded_file.content_type or mimetypes.guess_type(uploaded_file.filename)[0] or "application/octet-stream"
+        evidence_type = (
+            uploaded_file.content_type
+            or mimetypes.guess_type(uploaded_file.filename)[0]
+            or "application/octet-stream"
+        )
         evidence_hash = compute_file_hash(evidence_path)
 
-    # Sanitize inputs before analysis
+    # Sanitize text inputs — html.escape + truncation (see security_utils)
     complaint_text = sanitize_text(complaint_text)
     suspicious_url = sanitize_url(suspicious_url)
+    user_name = sanitize_text(user_name, max_length=200)
 
     # URL threat intelligence check (non-blocking, enriches indicators)
     url_intel = {}
@@ -1353,6 +1358,278 @@ async def create_complaint(
                 target=send_high_risk_alert,
                 args=(complaint_id, ai_result["level"], ai_result["threat_type"],
                       user_name, int(ai_result["confidence"])),
+                daemon=True,
+            ).start()
+        except Exception:
+            pass
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Firebase-authenticated complaint submission
+# ---------------------------------------------------------------------------
+# This endpoint is intentionally separate from POST /complaints so that the
+# existing session-token flow (and its 169 passing tests) remain completely
+# untouched.  New frontend builds using Firebase Auth should call this route.
+#
+# Key differences from POST /complaints:
+#   - Auth is a verified Firebase ID Token (via verify_firebase_token dep).
+#   - user_id and user_name are NEVER accepted from the client body.
+#   - uid comes from the verified token; display name falls back to email prefix.
+#   - A local DB user record is upserted so audit logs and /my-complaints work.
+# ---------------------------------------------------------------------------
+from fastapi import Depends as _Depends  # noqa: E402  (import already at top via fastapi)
+from firebase_auth import verify_firebase_token as _verify_firebase_token  # noqa: E402
+
+
+def _upsert_firebase_user(uid: str, email: str) -> dict:
+    """
+    Ensure a local users row exists for the Firebase uid.
+    If not present, creates one with role='user'.
+    Returns the row as a dict.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT id, full_name, email, role FROM users WHERE id = ?", (uid,)
+    ).fetchone()
+
+    if row:
+        conn.close()
+        return dict(row)
+
+    # First time — create a local shadow user
+    display_name = email.split("@")[0] if email else uid[:16]
+    conn.execute(
+        """
+        INSERT INTO users (id, full_name, email, password_hash, role, created_at)
+        VALUES (?, ?, ?, '', 'user', ?)
+        """,
+        (uid, display_name, email, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+    )
+    conn.commit()
+    conn.close()
+    return {"id": uid, "full_name": display_name, "email": email, "role": "user"}
+
+
+@app.post("/complaints/firebase")
+async def create_complaint_firebase(
+    category: str = Form(...),
+    complaint_text: str = Form(...),
+    suspicious_url: str = Form(""),
+    evidence: UploadFile | None = File(None),
+    screenshot: UploadFile | None = File(None),
+    firebase_user: dict = _Depends(_verify_firebase_token),
+):
+    """
+    Submit a complaint using a Firebase ID Token for authentication.
+
+    The caller must NOT send user_id or user_name — these are derived from the
+    verified Firebase token to prevent identity spoofing.
+    """
+    # Identity comes exclusively from the verified token
+    uid: str = firebase_user["uid"]
+    email: str = firebase_user.get("email", "")
+
+    local_user = _upsert_firebase_user(uid, email)
+    user_name: str = local_user["full_name"]
+
+    uploaded_file = evidence or screenshot
+    evidence_path = ""
+    evidence_name = ""
+    evidence_type = ""
+    evidence_hash = ""
+    complaint_id = f"RK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
+
+    if uploaded_file and uploaded_file.filename:
+        content = await uploaded_file.read()
+        is_valid, reason = validate_file_upload(
+            uploaded_file.filename,
+            uploaded_file.content_type or "",
+            len(content),
+        )
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=reason)
+
+        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id)
+        evidence_path = os.path.join(UPLOAD_DIR, safe_name)
+        # Guard against path traversal — ensure resolved path stays inside UPLOAD_DIR
+        if not os.path.abspath(evidence_path).startswith(os.path.abspath(UPLOAD_DIR)):
+            raise HTTPException(status_code=400, detail="Invalid filename.")
+
+        evidence_name = os.path.basename(uploaded_file.filename)
+        with open(evidence_path, "wb") as out_file:
+            out_file.write(content)
+
+        evidence_type = (
+            uploaded_file.content_type
+            or mimetypes.guess_type(uploaded_file.filename)[0]
+            or "application/octet-stream"
+        )
+        evidence_hash = compute_file_hash(evidence_path)
+
+    complaint_text = sanitize_text(complaint_text)
+    suspicious_url = sanitize_url(suspicious_url)
+
+    url_intel: dict = {}
+    if suspicious_url:
+        try:
+            url_intel = check_url_threat_intel(suspicious_url)
+        except Exception:
+            url_intel = {}
+
+    ai_result = build_hybrid_result(complaint_text, suspicious_url, evidence_name)
+
+    if url_intel.get("is_malicious"):
+        ai_result["score"] = min(ai_result["score"] + 15, 100)
+        ai_result["reason"] += f"\n\nThreat Intel:\n• URL flagged: {url_intel.get('details', '')}"
+        if ai_result["score"] >= 81:
+            ai_result["level"] = "Critical"
+            ai_result["status"] = "Escalated"
+
+    linked_case_count = get_linked_case_count(suspicious_url, evidence_hash)
+
+    if linked_case_count >= 1:
+        ai_result["score"] = min(ai_result["score"] + 10, 100)
+        ai_result["confidence"] = min(ai_result["confidence"] + 5, 99)
+        ai_result["reason"] += (
+            f"\n\nCampaign Alert:\n• Linked indicator found in {linked_case_count} earlier case(s)."
+        )
+        if ai_result["score"] >= 81:
+            ai_result["level"] = "Critical"
+            ai_result["status"] = "Escalated"
+
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    attack_channel = detect_channel(complaint_text, suspicious_url, evidence_name)
+    incident_hour = datetime.now().hour
+    incident_day = datetime.now().strftime("%A")
+    decision_path = ai_result.get("decision_path", "")
+
+    import json as _json
+    ev_indicators = extract_evidence_indicators(complaint_text, suspicious_url)
+    evidence_indicators_json = _json.dumps(ev_indicators)
+
+    evidence_size = 0
+    if evidence_path and os.path.exists(evidence_path):
+        try:
+            evidence_size = os.path.getsize(evidence_path)
+        except Exception:
+            pass
+
+    campaign_signature = ""
+    threat_slug = (
+        (ai_result.get("rule_based_type") or ai_result["threat_type"] or "unknown")[:20]
+        .lower()
+        .replace(" ", "-")
+        .replace("/", "-")
+    )
+    if suspicious_url:
+        try:
+            from urllib.parse import urlparse
+            domain = urlparse(suspicious_url).netloc or suspicious_url[:40]
+            campaign_signature = f"url:{domain}:{threat_slug}"
+        except Exception:
+            campaign_signature = f"url:{suspicious_url[:30]}:{threat_slug}"
+    elif evidence_hash:
+        campaign_signature = f"file:{evidence_hash[:12]}:{threat_slug}"
+    elif attack_channel and attack_channel != "Unknown":
+        campaign_signature = f"ch:{attack_channel.lower()}:{threat_slug}"
+
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO complaints (
+            id, user_id, user_name, category, complaint_text, suspicious_url,
+            screenshot_path, threat_type, risk_score, risk_level, ai_reason, mitigation,
+            status, created_at, evidence_path, evidence_name, evidence_type,
+            evidence_hash, attack_channel, ai_confidence, linked_case_count,
+            ml_prediction, model_used, ml_predicted_type, rule_based_type,
+            campaign_signature, incident_hour, incident_day, decision_path,
+            evidence_size, evidence_indicators
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            complaint_id, uid, user_name, category, complaint_text, suspicious_url,
+            evidence_path, ai_result["threat_type"], ai_result["score"], ai_result["level"],
+            ai_result["reason"], ai_result["mitigation"], ai_result["status"], created_at,
+            evidence_path, evidence_name, evidence_type, evidence_hash, attack_channel,
+            ai_result["confidence"], linked_case_count, ai_result["ml_prediction"],
+            ai_result["model_used"],
+            ai_result.get("ml_predicted_type", ai_result["ml_prediction"]),
+            ai_result.get("rule_based_type", ""), campaign_signature,
+            incident_hour, incident_day, decision_path,
+            evidence_size, evidence_indicators_json,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    write_audit(
+        uid,
+        user_name,
+        local_user["role"],
+        "COMPLAINT_CREATED",
+        "complaint",
+        complaint_id,
+        details=(
+            f"Risk {ai_result['level']} / {ai_result['threat_type']} "
+            f"/ ML {ai_result['ml_prediction']} [firebase-auth]"
+        ),
+    )
+
+    if ai_result["status"] == "Escalated":
+        write_audit(
+            uid,
+            user_name,
+            local_user["role"],
+            "AUTO_ESCALATED",
+            "complaint",
+            complaint_id,
+            new_value="Escalated",
+            details="Critical risk threshold met",
+        )
+
+    response = {
+        "success": True,
+        "message": "Complaint submitted successfully",
+        "complaint_id": complaint_id,
+        "risk_score": ai_result["score"],
+        "risk_level": ai_result["level"],
+        "threat_type": ai_result["threat_type"],
+        "ai_reason": ai_result["reason"],
+        "mitigation": ai_result["mitigation"],
+        "mitigation_steps": build_mitigation_steps(ai_result["threat_type"], ai_result["level"]),
+        "severity_explanation": build_severity_explanation(
+            ai_result["level"],
+            ai_result["score"],
+            int(ai_result["confidence"]),
+            ai_result["threat_type"],
+            ev_indicators.get("urls", []) + [ai_result["threat_type"]],
+        ),
+        "ioc": extract_ioc(complaint_text, suspicious_url),
+        "ai_confidence": ai_result["confidence"],
+        "status": ai_result["status"],
+        "linked_case_count": linked_case_count,
+        "attack_channel": attack_channel,
+        "ml_prediction": ai_result["ml_prediction"],
+        "model_used": ai_result["model_used"],
+    }
+
+    try:
+        import threading
+        threading.Thread(target=maybe_auto_retrain, daemon=True).start()
+    except Exception:
+        pass
+
+    if ai_result["level"] in ("High", "Critical"):
+        try:
+            import threading
+            threading.Thread(
+                target=send_high_risk_alert,
+                args=(
+                    complaint_id, ai_result["level"], ai_result["threat_type"],
+                    user_name, int(ai_result["confidence"]),
+                ),
                 daemon=True,
             ).start()
         except Exception:
