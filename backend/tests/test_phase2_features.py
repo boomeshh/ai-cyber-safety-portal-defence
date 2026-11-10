@@ -26,7 +26,7 @@ _TOKENS: dict = {}
 
 def _admin_token() -> str:
     if "admin" not in _TOKENS:
-        res = client.post("/login", json={"email": "admin@rakshak.ai", "password": "admin123"})
+        res = client.post("/login", json={"email": "test-admin@invalid.example", "password": "test-admin-password-only"})
         assert res.status_code == 200, f"Admin login failed: {res.text}"
         _TOKENS["admin"] = res.json()["token"]
     return _TOKENS["admin"]
@@ -34,7 +34,7 @@ def _admin_token() -> str:
 
 def _cert_token() -> str:
     if "cert" not in _TOKENS:
-        res = client.post("/login", json={"email": "cert@rakshak.ai", "password": "cert123"})
+        res = client.post("/login", json={"email": "test-cert@invalid.example", "password": "test-cert-password-only"})
         assert res.status_code == 200, f"CERT login failed: {res.text}"
         _TOKENS["cert"] = res.json()["token"]
     return _TOKENS["cert"]

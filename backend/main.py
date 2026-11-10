@@ -320,28 +320,6 @@ def init_db():
 
     conn.commit()
 
-    demo_accounts = [
-        ("ADM-DEMO-001", "Rakshak Admin", "admin@rakshak.ai", "admin", "admin123"),
-        ("CERT-DEMO-001", "Rakshak CERT Officer", "cert@rakshak.ai", "cert", "cert123"),
-    ]
-
-    for user_id, full_name, email, role, raw_password in demo_accounts:
-        existing = cursor.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
-        if not existing:
-            cursor.execute(
-                "INSERT INTO users (id, full_name, email, password_hash, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    user_id,
-                    full_name,
-                    email,
-                    hash_password(raw_password),
-                    role,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                ),
-            )
-
-    conn.commit()
-
     rows = cursor.execute("SELECT id, password, password_hash FROM users").fetchall()
     for row in rows:
         if row["password"] and not row["password_hash"]:
@@ -1118,7 +1096,7 @@ def register_user(payload: RegisterRequest):
             payload.full_name.strip(),
             payload.email.lower(),
             hash_password(payload.password),
-            payload.role,
+            "user",
             created_at,
         ),
     )
@@ -1128,7 +1106,7 @@ def register_user(payload: RegisterRequest):
     write_audit(
         user_id,
         payload.full_name.strip(),
-        payload.role,
+        "user",
         "USER_REGISTERED",
         "user",
         user_id,

@@ -42,11 +42,11 @@ def _get_token(email: str, password: str, cache_key: str) -> str:
 
 
 def _admin_token() -> str:
-    return _get_token("admin@rakshak.ai", "admin123", "admin")
+    return _get_token("test-admin@invalid.example", "test-admin-password-only", "admin")
 
 
 def _cert_token() -> str:
-    return _get_token("cert@rakshak.ai", "cert123", "cert")
+    return _get_token("test-cert@invalid.example", "test-cert-password-only", "cert")
 
 
 def _user_token() -> str:
@@ -133,7 +133,7 @@ class TestAuthFlow:
         assert token
 
     def test_login_wrong_password_rejected(self):
-        res = client.post("/login", json={"email": "admin@rakshak.ai", "password": "wrongpassword"})
+        res = client.post("/login", json={"email": "test-admin@invalid.example", "password": "wrongpassword"})
         assert res.status_code == 200
         assert res.json().get("success") is False
 
@@ -493,6 +493,31 @@ class TestAuthFlow:
         assert res.status_code == 200
         assert res.json().get("success") is True
 
+    @pytest.mark.parametrize("requested_role", ["admin", "cert"])
+    def test_public_registration_cannot_create_privileged_account(self, requested_role):
+        email = f"role_{requested_role}_{uuid.uuid4().hex[:8]}@test.com"
+        res = client.post("/register", json={
+            "full_name": "Role Escalation Test",
+            "email": email,
+            "password": "SecurePass123",
+            "role": requested_role,
+        })
+        assert res.status_code == 200
+        assert res.json().get("success") is True
+
+        login = client.post("/login", json={
+            "email": email,
+            "password": "SecurePass123",
+        })
+        assert login.status_code == 200
+        assert login.json()["user"]["role"] == "user"
+        token = login.json()["token"]
+        privileged_response = client.get(
+            "/admin/overview",
+            headers=_auth(token),
+        )
+        assert privileged_response.status_code == 403
+
     def test_duplicate_registration_rejected(self):
         email = f"dup_{uuid.uuid4().hex[:8]}@test.com"
         client.post("/register", json={"full_name": "A", "email": email, "password": "pass123", "role": "user"})
@@ -518,14 +543,14 @@ class TestAuthFlow:
         assert res.json().get("success") is False
 
     def test_admin_login(self):
-        res = client.post("/login", json={"email": "admin@rakshak.ai", "password": "admin123"})
+        res = client.post("/login", json={"email": "test-admin@invalid.example", "password": "test-admin-password-only"})
         assert res.status_code == 200
         data = res.json()
         assert data["success"] is True
         assert data["user"]["role"] == "admin"
 
     def test_cert_login(self):
-        res = client.post("/login", json={"email": "cert@rakshak.ai", "password": "cert123"})
+        res = client.post("/login", json={"email": "test-cert@invalid.example", "password": "test-cert-password-only"})
         assert res.status_code == 200
         assert res.json()["user"]["role"] == "cert"
 
@@ -541,7 +566,7 @@ class TestAuthFlow:
 
     def test_logout(self):
         # Use a fresh one-off login so we don't invalidate the cached admin token
-        res = client.post("/login", json={"email": "admin@rakshak.ai", "password": "admin123"})
+        res = client.post("/login", json={"email": "test-admin@invalid.example", "password": "test-admin-password-only"})
         if res.status_code != 200:
             pytest.skip("Rate limited — skipping logout test")
         token = res.json()["token"]

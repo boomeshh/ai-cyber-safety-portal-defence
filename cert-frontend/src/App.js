@@ -34,8 +34,8 @@ function getRiskClass(level) {
 
 // ─── Login Gate ────────────────────────────────────────────────────────────
 function LoginGate({ onLogin }) {
-  const [email, setEmail] = useState('cert@rakshak.ai');
-  const [password, setPassword] = useState('cert123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
 
   const handleLogin = async (e) => {

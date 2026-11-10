@@ -104,14 +104,22 @@ npm start
 
 ---
 
-## Demo Credentials
+## Account Provisioning
 
-| Role | Email | Password |
-|------|-------|----------|
-| Admin | admin@rakshak.ai | admin123 |
-| CERT Officer | cert@rakshak.ai | cert123 |
+Public registration creates standard user accounts only. It never creates Admin or
+CERT accounts.
 
-Register a new account on the User Frontend for a standard user login.
+Create a privileged account explicitly from the backend directory. The command
+prompts for the password securely without logging it:
+
+```bash
+python bootstrap_privileged_account.py --role admin
+python bootstrap_privileged_account.py --role cert
+```
+
+For non-interactive provisioning, set `RAKSHAK_BOOTSTRAP_EMAIL`,
+`RAKSHAK_BOOTSTRAP_NAME`, and `RAKSHAK_BOOTSTRAP_PASSWORD` only for the
+one-time command invocation. Existing accounts are preserved and never reset.
 
 ---
 

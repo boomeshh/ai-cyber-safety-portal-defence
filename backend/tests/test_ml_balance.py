@@ -31,7 +31,7 @@ _TOKENS: dict = {}
 
 def _admin_token() -> str:
     if "admin" not in _TOKENS:
-        res = client.post("/login", json={"email": "admin@rakshak.ai", "password": "admin123"})
+        res = client.post("/login", json={"email": "test-admin@invalid.example", "password": "test-admin-password-only"})
         assert res.status_code == 200
         _TOKENS["admin"] = res.json()["token"]
     return _TOKENS["admin"]
