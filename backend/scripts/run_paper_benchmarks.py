@@ -12,7 +12,6 @@ seeds the production SQLite database at import time.
 from __future__ import annotations
 
 import csv
-import hashlib
 import logging
 import io
 import os
@@ -31,12 +30,12 @@ if str(BACKEND_DIR) not in sys.path:
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 import firebase_auth
 import ml_engine
 from security_utils import (
     MAX_FILE_SIZE_BYTES,
+    encrypt_payload,
     generate_safe_filename,
     sanitize_text,
     validate_file_upload,
@@ -48,8 +47,6 @@ logging.getLogger("firebase_auth").setLevel(logging.CRITICAL)
 SEED = 42
 ATTEMPTS_PER_VECTOR = 100
 CRYPTO_ITERATIONS = 1000
-CRYPTO_KEY = hashlib.sha256(b"rakshak-paper-benchmark-aes-256-key").digest()
-CRYPTO_NONCE_PREFIX = b"rakshak-nc"
 
 
 def _milliseconds(start_ns: int, end_ns: int) -> float:
@@ -203,7 +200,6 @@ def _run_security_benchmark() -> tuple[list[str], list[list[object]]]:
 def _run_crypto_benchmark() -> tuple[list[str], list[list[object]]]:
     baseline_latencies: list[float] = []
     pipeline_latencies: list[float] = []
-    aes = AESGCM(CRYPTO_KEY)
 
     for index in range(CRYPTO_ITERATIONS):
         text = f"synthetic complaint {SEED}-{index}: verify the reported message"
@@ -212,10 +208,9 @@ def _run_crypto_benchmark() -> tuple[list[str], list[list[object]]]:
         text.encode("utf-8")
         baseline_latencies.append(_milliseconds(start, time.perf_counter_ns()))
 
-        nonce = CRYPTO_NONCE_PREFIX + index.to_bytes(2, "big")
         start = time.perf_counter_ns()
         sanitized = sanitize_text(text)
-        aes.encrypt(nonce, sanitized.encode("utf-8"), None)
+        encrypt_payload(sanitized)
         generate_safe_filename(f"evidence-{index}.txt", prefix="RK")
         pipeline_latencies.append(_milliseconds(start, time.perf_counter_ns()))
 
@@ -243,7 +238,7 @@ def _run_crypto_benchmark() -> tuple[list[str], list[list[object]]]:
             "0.00",
         ],
         [
-            "sanitize_text + AES-256-GCM + SHA-256 filename",
+            "sanitize_text + production AES-256-GCM + SHA-256 filename",
             CRYPTO_ITERATIONS,
             f"{pipeline_mean:.4f}",
             f"{_percentile(pipeline_latencies, 95):.4f}",
@@ -406,8 +401,7 @@ def main() -> None:
     print("# Rakshak AI paper benchmarks")
     print(f"Seed: {SEED}; security attempts/vector: {ATTEMPTS_PER_VECTOR}; "
           f"crypto iterations: {CRYPTO_ITERATIONS}; ML samples/class: 15")
-    print("Note: AES-256-GCM is benchmark-local; production currently exposes "
-          "sanitization, upload validation, and SHA-256 filename hashing APIs.")
+    print("Benchmark 2 uses security_utils.encrypt_payload().")
 
     benchmarks = [
         ("## Benchmark 1: Security Hardening & Attack Mitigation Matrix",

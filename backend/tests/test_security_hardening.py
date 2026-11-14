@@ -49,6 +49,7 @@ import os
 import sys
 import uuid
 import sqlite3
+import base64
 from unittest.mock import patch
 
 import pytest
@@ -63,6 +64,9 @@ from security_utils import (  # noqa: E402
     sanitize_text,
     validate_file_upload,
     generate_safe_filename,
+    encrypt_payload,
+    decrypt_payload,
+    _get_aes_key,
     MAX_FILE_SIZE_BYTES,
     SAFE_EXTENSIONS,
     BLOCKED_EXTENSIONS,
@@ -562,6 +566,44 @@ class TestValidateFileUploadUnit:
         """Missing MIME type (empty string) should not block a safe extension."""
         ok, msg = validate_file_upload("image.jpg", "", 1024)
         assert ok is True, msg
+
+
+class TestPayloadEncryption:
+    @pytest.fixture(autouse=True)
+    def reset_test_key(self, monkeypatch):
+        monkeypatch.setenv("RAKSHAK_TESTING", "1")
+        monkeypatch.delenv("RAKSHAK_AES_KEY", raising=False)
+        _get_aes_key.cache_clear()
+        yield
+        _get_aes_key.cache_clear()
+
+    def test_sensitive_payload_round_trip(self):
+        complaint = (
+            '{"complaint_text":"classified movement order attached",'
+            '"evidence_name":"deployment.pdf"}'
+        )
+        token = encrypt_payload(complaint)
+
+        assert decrypt_payload(token) == complaint
+
+    def test_identical_plaintext_uses_distinct_nonce(self):
+        plaintext = "sensitive evidence metadata"
+
+        first = encrypt_payload(plaintext)
+        second = encrypt_payload(plaintext)
+
+        assert first != second
+        assert decrypt_payload(first) == plaintext
+        assert decrypt_payload(second) == plaintext
+
+    def test_ciphertext_tampering_is_rejected(self):
+        token = encrypt_payload("tamper-evident complaint")
+        encoded = bytearray(base64.b64decode(token))
+        encoded[-1] ^= 0x01
+        tampered = base64.b64encode(encoded).decode("ascii")
+
+        with pytest.raises(ValueError):
+            decrypt_payload(tampered)
 
 
 class TestGenerateSafeFilenameUnit:

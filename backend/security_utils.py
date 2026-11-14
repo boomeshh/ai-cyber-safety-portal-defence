@@ -12,10 +12,17 @@ import time
 import html
 import logging
 import hashlib
+import base64
+import binascii
 from collections import defaultdict
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -55,6 +62,113 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset({
 
 # 5 MB hard cap for evidence uploads (down from the previous 15 MB)
 MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
+
+
+# ---------------------------------------------------------------------------
+# AES-256-GCM authenticated encryption
+# ---------------------------------------------------------------------------
+AES_KEY_ENV = "RAKSHAK_AES_KEY"
+AES_KEY_BYTES = 32
+AES_GCM_NONCE_BYTES = 12
+AES_GCM_TAG_BYTES = 16
+_TESTING_AES_KEY = hashlib.sha256(
+    b"rakshak-ai-testing-aes-256-gcm-key-v1"
+).digest()
+_HKDF_SALT = b"rakshak-ai-aes-256-gcm-v1"
+
+
+def _is_truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _decode_aes_key(raw_key: str) -> bytes:
+    value = raw_key.strip()
+    if len(value) == AES_KEY_BYTES * 2:
+        try:
+            key = bytes.fromhex(value)
+        except ValueError:
+            key = b""
+        if len(key) == AES_KEY_BYTES:
+            return key
+
+    try:
+        key = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError(
+            f"{AES_KEY_ENV} must be a 64-character hex or base64-encoded 32-byte key."
+        ) from error
+    if len(key) != AES_KEY_BYTES:
+        raise ValueError(
+            f"{AES_KEY_ENV} must decode to exactly {AES_KEY_BYTES} bytes."
+        )
+    return key
+
+
+@lru_cache(maxsize=1)
+def _get_aes_key() -> bytes:
+    configured_key = os.getenv(AES_KEY_ENV)
+    if configured_key:
+        return _decode_aes_key(configured_key)
+
+    if _is_truthy_env("RAKSHAK_TESTING"):
+        return _TESTING_AES_KEY
+
+    environment = os.getenv("RAKSHAK_ENV", "").strip().lower()
+    if environment in {"dev", "development", "local"}:
+        logger.warning(
+            "[security] %s is unset; using an ephemeral AES key for development.",
+            AES_KEY_ENV,
+        )
+        return os.urandom(AES_KEY_BYTES)
+
+    secret = os.getenv("SECRET_KEY") or os.getenv("RAKSHAK_SECRET_KEY")
+    if not secret:
+        logger.warning(
+            "[security] %s is unset in production; using the legacy fallback "
+            "secret for AES key derivation. Configure %s.",
+            AES_KEY_ENV,
+            AES_KEY_ENV,
+        )
+        secret = "rakshak-ai-legacy-secret-fallback-v1"
+
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=AES_KEY_BYTES,
+        salt=_HKDF_SALT,
+        info=b"payload-encryption",
+    ).derive(secret.encode("utf-8"))
+
+
+def encrypt_payload(plaintext: str | bytes) -> str:
+    """Encrypt a UTF-8 string or bytes with AES-256-GCM.
+
+    The returned token is base64(nonce || ciphertext || authentication tag).
+    A fresh 96-bit nonce is generated for every call.
+    """
+    if isinstance(plaintext, str):
+        payload = plaintext.encode("utf-8")
+    elif isinstance(plaintext, bytes):
+        payload = plaintext
+    else:
+        raise TypeError("plaintext must be str or bytes")
+
+    nonce = os.urandom(AES_GCM_NONCE_BYTES)
+    ciphertext = AESGCM(_get_aes_key()).encrypt(nonce, payload, None)
+    return base64.b64encode(nonce + ciphertext).decode("ascii")
+
+
+def decrypt_payload(token: str) -> str:
+    """Decrypt and authenticate a token produced by :func:`encrypt_payload`."""
+    try:
+        encoded = base64.b64decode(token, validate=True)
+        if len(encoded) < AES_GCM_NONCE_BYTES + AES_GCM_TAG_BYTES:
+            raise ValueError("Encrypted payload is too short.")
+        nonce = encoded[:AES_GCM_NONCE_BYTES]
+        ciphertext = encoded[AES_GCM_NONCE_BYTES:]
+        plaintext = AESGCM(_get_aes_key()).decrypt(nonce, ciphertext, None)
+        return plaintext.decode("utf-8")
+    except (binascii.Error, InvalidTag, UnicodeDecodeError, TypeError, ValueError) as error:
+        raise ValueError("Invalid encrypted payload.") from error
 
 
 # ---------------------------------------------------------------------------
