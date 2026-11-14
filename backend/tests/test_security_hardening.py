@@ -126,6 +126,8 @@ _TINY_PNG = (
     b"c\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
     b"\x00\x00\x00\x00IEND\xaeB`\x82"  # IEND
 )
+_TINY_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF"
+_TINY_WEBP = b"RIFF0000WEBP"
 
 _MINIMAL_PDF = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF"
 _PLAIN_TEXT  = b"This is a plain text evidence note."
@@ -295,12 +297,12 @@ class TestAllowedFileUploads:
         assert res.json()["success"] is True
 
     def test_jpeg_allowed(self):
-        res = self._post_firebase("photo.jpeg", _TINY_PNG, "image/jpeg")
+        res = self._post_firebase("photo.jpeg", _TINY_JPEG, "image/jpeg")
         assert res.status_code == 200, res.text
 
     def test_webp_allowed(self):
         # webp has no blocked MIME — image/webp is in SAFE_MIME_TYPES
-        res = self._post_firebase("img.webp", _TINY_PNG, "image/webp")
+        res = self._post_firebase("img.webp", _TINY_WEBP, "image/webp")
         assert res.status_code == 200, res.text
 
     def test_pdf_allowed(self):
@@ -504,6 +506,45 @@ class TestValidateFileUploadUnit:
         for ext in (".php", ".exe", ".sh", ".py", ".html", ".apk", ".zip"):
             ok, msg = validate_file_upload(f"file{ext}", "image/png", 100)
             assert ok is False, f"Expected {ext} to be rejected"
+
+    def test_blocked_intermediate_extensions_rejected(self):
+        for filename in ("payload.php.jpg", "archive.exe.pdf", "script.sh.txt"):
+            ok, msg = validate_file_upload(filename, "image/jpeg", 100)
+            assert ok is False, f"Expected compound filename to be rejected: {filename}"
+            assert "blocked" in msg.lower()
+
+    def test_spoofed_binary_magic_bytes_rejected(self):
+        spoofed_files = (
+            ("image.png", "image/png", b"not a png"),
+            ("image.jpg", "image/jpeg", b"not a jpeg"),
+            ("image.webp", "image/webp", b"RIFF0000NOPE"),
+            ("document.pdf", "application/pdf", b"not a pdf"),
+        )
+        for filename, content_type, content in spoofed_files:
+            ok, msg = validate_file_upload(
+                filename, content_type, len(content), content
+            )
+            assert ok is False, f"Expected spoofed content to be rejected: {filename}"
+            assert "signature" in msg.lower()
+
+    def test_valid_binary_magic_bytes_accepted(self):
+        valid_files = (
+            ("image.png", "image/png", b"\x89PNG\r\n\x1a\n"),
+            ("image.jpg", "image/jpeg", b"\xff\xd8\xff"),
+            ("image.webp", "image/webp", b"RIFF0000WEBP"),
+            ("document.pdf", "application/pdf", b"%PDF-1.7"),
+        )
+        for filename, content_type, content in valid_files:
+            ok, msg = validate_file_upload(
+                filename, content_type, len(content), content
+            )
+            assert ok is True, f"Expected valid content to be accepted: {filename}: {msg}"
+
+    def test_text_binary_and_script_headers_rejected(self):
+        for content in (b"safe\x00text", b"MZ\x90\x00", b"<?php echo 1;"):
+            ok, msg = validate_file_upload("note.txt", "text/plain", len(content), content)
+            assert ok is False
+            assert "content" in msg.lower()
 
     def test_allowed_png_accepted(self):
         ok, msg = validate_file_upload("screenshot.png", "image/png", 1024)

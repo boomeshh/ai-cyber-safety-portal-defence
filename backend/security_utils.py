@@ -14,6 +14,7 @@ import logging
 import hashlib
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -102,16 +103,22 @@ def sanitize_url(url: str) -> str:
     return url[:2000]
 
 
-def validate_file_upload(filename: str, content_type: str, file_size: int) -> tuple[bool, str]:
+def validate_file_upload(
+    filename: str,
+    content_type: str,
+    file_size: int,
+    content: bytes | None = None,
+) -> tuple[bool, str]:
     """
     Validate an uploaded evidence file against strict security criteria.
 
     Policy (deny-by-default):
       1. Filename must be present.
-      2. Extension must be on the SAFE_EXTENSIONS allowlist.
-      3. Extension must NOT be on the BLOCKED_EXTENSIONS denylist (belt-and-braces).
+      2. Every filename suffix must be free of blocked extensions.
+      3. Final extension must be on the SAFE_EXTENSIONS allowlist.
       4. File size must not exceed MAX_FILE_SIZE_BYTES.
       5. MIME type, if provided, must match the SAFE_MIME_TYPES allowlist.
+      6. Provided content must match the allowed binary file signature.
 
     Returns (is_valid: bool, reason: str).
     The reason string is safe to return to the client (no internal path info).
@@ -119,15 +126,20 @@ def validate_file_upload(filename: str, content_type: str, file_size: int) -> tu
     if not filename:
         return False, "No filename provided."
 
-    _, ext = os.path.splitext(filename.lower())
+    lower_filename = filename.lower()
+    suffixes = [suffix.lower() for suffix in Path(lower_filename).suffixes]
+    ext = suffixes[-1] if suffixes else ""
+
+    blocked_suffix = next(
+        (suffix for suffix in suffixes if suffix in BLOCKED_EXTENSIONS),
+        None,
+    )
+    if blocked_suffix:
+        return False, f"File type '{blocked_suffix}' is blocked for security reasons."
 
     # Primary gate: extension must be explicitly allowed
     if ext not in SAFE_EXTENSIONS:
         return False, f"File type '{ext or '(none)'}' is not permitted. Allowed: images (png, jpg, jpeg, webp) and documents (pdf, txt)."
-
-    # Secondary gate: belt-and-braces block for executables
-    if ext in BLOCKED_EXTENSIONS:
-        return False, f"File type '{ext}' is blocked for security reasons."
 
     if file_size > MAX_FILE_SIZE_BYTES:
         size_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
@@ -136,6 +148,28 @@ def validate_file_upload(filename: str, content_type: str, file_size: int) -> tu
     # MIME type check — enforce, don't just warn
     if content_type and content_type not in SAFE_MIME_TYPES:
         return False, f"MIME type '{content_type}' is not permitted for evidence uploads."
+
+    if content is not None:
+        signatures = {
+            ".png": b"\x89PNG\r\n\x1a\n",
+            ".jpg": b"\xff\xd8\xff",
+            ".jpeg": b"\xff\xd8\xff",
+            ".webp": b"RIFF",
+            ".pdf": b"%PDF-",
+        }
+        signature = signatures.get(ext)
+        if signature and not (
+            content.startswith(signature)
+            and (ext != ".webp" or content[8:12] == b"WEBP")
+        ):
+            return False, f"File content does not match the '{ext}' file signature."
+
+        if ext == ".txt":
+            normalized = content.lstrip().lower()
+            if b"\x00" in content or normalized.startswith(
+                (b"mz", b"<?php", b"<script")
+            ):
+                return False, "Text evidence contains binary or executable content."
 
     return True, "OK"
 

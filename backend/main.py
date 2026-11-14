@@ -1180,6 +1180,7 @@ async def create_complaint(
             uploaded_file.filename,
             uploaded_file.content_type or "",
             len(content),
+            content,
         )
         if not is_valid:
             raise HTTPException(status_code=400, detail=reason)
@@ -1447,6 +1448,7 @@ async def create_complaint_firebase(
             uploaded_file.filename,
             uploaded_file.content_type or "",
             len(content),
+            content,
         )
         if not is_valid:
             raise HTTPException(status_code=400, detail=reason)
