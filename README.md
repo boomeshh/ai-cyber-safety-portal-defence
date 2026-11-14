@@ -1,241 +1,171 @@
-# 🛡️ Rakshak AI
-### AI-Powered Cyber Threat Reporting, Analysis & Response Platform
+# Rakshak AI
 
-Rakshak AI helps everyday individuals report suspicious cyber incidents — phishing, malicious links, fraudulent messages, and suspicious files — and provides automated AI-driven analysis, risk scoring, prioritization, and actionable guidance.
+[![CI](https://github.com/boomeshh/ai-cyber-safety-portal-defence/actions/workflows/ci.yml/badge.svg)](https://github.com/boomeshh/ai-cyber-safety-portal-defence/actions/workflows/ci.yml)
 
-**Live:** [rakshakai.online](https://www.rakshakai.online) · [admin.rakshakai.online](https://admin.rakshakai.online)
+## Project overview
 
----
+Rakshak AI is a **Zero-Trust Defence Cyber-Incident & Threat Triage Portal**. It gives citizens, administrators, and cyber emergency response teams a controlled workflow for submitting suspicious content, preserving evidence, classifying threats, scoring risk, and coordinating response.
 
-## 🎯 Problem
+The platform combines three role-specific React portals with a FastAPI API, Firebase-backed identity, hybrid machine-learning analysis, auditable case management, and evidence storage. Its operating model is:
 
-Everyday users receive phishing messages, malicious links, fake communications, fraudulent requests, and suspicious files. Existing reporting channels often require users to identify the threat themselves, and incidents can be difficult to prioritize once reported.
+**Report → Verify → Sanitize → Analyze → Score → Triage → Respond**
 
----
+Live deployments: [rakshakai.online](https://www.rakshakai.online) · [admin.rakshakai.online](https://admin.rakshakai.online)
 
-## 💡 Solution
+## System architecture
 
-Rakshak AI provides a single workflow to:
+```mermaid
+graph TD
+    U[user-frontend<br/>Citizen portal]
+    A[admin-frontend<br/>Operations portal]
+    C[cert-frontend<br/>CERT portal]
+    N[Nginx Alpine<br/>Reverse proxy and static assets]
+    API[FastAPI backend<br/>python:3.11-slim<br/>non-root appuser]
+    AUTH[Security and auth layer<br/>Firebase Admin JWT verification<br/>html.escape XSS sanitization<br/>Deny-by-default upload allowlist<br/>SHA-256 evidence hashing<br/>AES-256 encryption]
+    ML[Hybrid ML risk scoring engine<br/>Rules + TF-IDF + classifier<br/>IOC extraction and campaign signals]
+    DB[(Persistent storage<br/>SQLite / PostgreSQL)]
+    EV[(Evidence volume<br/>Encrypted uploaded artifacts)]
+    CI[GitHub Actions CI/CD gatekeeper<br/>246 Pytest tests<br/>Matrix frontend builds<br/>Docker Buildx verification]
 
-**Report → Analyze → Risk Score → Prioritize → Act**
-
-1. **Report** — The user submits a suspicious message, link, file, or other evidence.
-2. **Analyze** — The AI/ML engine examines the submitted content for threat indicators.
-3. **Risk Score** — A risk score is generated based on the analysis.
-4. **Prioritize** — Incidents are ranked so higher-risk cases surface first.
-5. **Act** — The user receives guidance, and administrators can review and manage the case.
-
----
-
-## 👤 Who Can Use It
-
-- **Individual / Citizen**
-- **Family Member**
-- **Employee / Professional**
-
----
-
-## 🚀 Key Features
-
-### User Portal
-- Email authentication with email verification
-- Submit complaints with multi-format evidence (images, PDF, audio, video, APK)
-- AI-powered threat analysis with risk scoring
-- View complaint history with AI confidence, extracted indicators, and mitigation steps
-- Mobile-first responsive design
-
-### Admin / Management Portal
-- Role-based complaint triage queue
-- Status management (Open → Under Review → Escalated → Resolved)
-- Internal case notes and AI feedback system
-- Evidence access/download with authenticated sessions
-- Campaign intelligence graph and audit trail
-
-### AI / Threat Analysis
-- Threat classification across supported categories
-- Indicator of Compromise (IOC) extraction
-- Campaign/cluster detection via linked indicators
-- Heatmap intelligence views (Hour vs Day, Channel vs Risk, Category vs Channel)
-- Model retraining with safety guardrails
-
-### Security / Authentication
-- Email/password authentication with email verification requirement
-- Password hashing
-- Session/token-based authentication
-- Rate limiting on authentication endpoints
-- Security headers middleware
-- Input sanitization
-- Role-based access control
-- Audit logging for administrative actions
-
----
-
-## 🧠 AI / ML Engine
-
-| Component | Approach |
-|-----------|----------|
-| Feature Extraction | TF-IDF Vectorizer |
-| Classification | Logistic Regression |
-| Decision Logic | Hybrid rule-based + ML |
-| Threat Categories | Phishing, Malware/APK, Fraud, Suspicious Communication, and related categories |
-| IOC Extraction | Regex-based URL/domain/email/phone extraction |
-| Campaign Detection | Linked indicator matching |
-| Retraining | Safety-guarded (model is not replaced if accuracy drops) |
-
-This is a traditional machine learning pipeline (TF-IDF + Logistic Regression), not a deep learning or LLM-based system.
-
----
-
-## ⚠️ Risk Scoring
-
-Each submitted report is analyzed and assigned a risk score reflecting the likelihood and severity of the threat, which is then used to prioritize review and determine the guidance shown to the user.
-
----
-
-## 🏗️ System Architecture
-
-```
-User
-  ↓
-User Frontend
-  ↓
-Backend API
-  ↓
-AI / ML Analysis
-  ↓
-Risk Scoring
-  ↓
-Database / Storage
-  ↓
-Admin / Management Dashboard
+    U --> N
+    A --> N
+    C --> N
+    N --> API
+    API --> AUTH
+    AUTH --> ML
+    ML --> DB
+    AUTH --> EV
+    ML --> EV
+    CI -. validates .-> API
+    CI -. builds .-> N
 ```
 
----
+### Request and trust boundaries
 
-## 🔄 Workflow
+All portal traffic enters through the reverse proxy. The API does not trust client-supplied identity, file metadata, HTML, or risk assertions: it verifies Firebase Admin JWTs, applies role checks, sanitizes user-controlled text, validates uploads against an explicit allowlist, hashes evidence, and encrypts protected data before persistence.
 
-1. User submits suspicious content/evidence
-2. Backend receives the complaint
-3. AI/ML engine analyzes the submitted content
-4. Threat indicators are extracted/detected
-5. Risk score is generated
-6. Risk level is assigned
-7. User receives guidance / next action
-8. Admin reviews and manages the incident
+## Repository structure
 
----
+```text
+.
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── admin-frontend/       # Admin and management React portal
+├── backend/              # FastAPI API, ML engine, models, and tests
+│   └── tests/            # Backend security and feature tests
+├── cert-frontend/        # Cyber emergency response team React portal
+├── user-frontend/        # Citizen reporting React portal
+├── screenshots/          # Product screenshots
+├── docker-compose.yml    # Local backend + user portal orchestration
+├── LOCALHOST_SETUP.md    # Local environment notes
+└── README.md
+```
 
-## 🧰 Tech Stack
+## Security engineering highlights
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React, React Router, Firebase Auth |
-| Backend | FastAPI, Python |
-| Database | SQLite |
-| AI/ML | scikit-learn (TF-IDF + Logistic Regression) |
-| Authentication | Firebase Email/Password + Email Verification |
-| Email Alerts | Resend API (with SMTP fallback) |
-| Deployment | Vercel (frontend) + Render (backend) |
-| Security | Password hashing, session/JWT handling, rate limiting, security headers |
+- **Zero-trust authentication:** Firebase Admin verifies JWTs server-side; email verification and role-based access controls gate protected workflows.
+- **XSS defense:** User-controlled text is escaped with `html.escape` before it is rendered or included in generated reports.
+- **Evidence controls:** File uploads use a deny-by-default extension and MIME allowlist, bounded validation, SHA-256 integrity hashing, and authenticated access.
+- **Confidentiality:** AES-256 encryption protects sensitive evidence and data at rest where configured.
+- **Abuse resistance:** Authentication and sensitive API paths use rate limiting, security headers, and explicit error handling.
+- **Accountability:** Administrative actions and security-relevant events are recorded in an audit trail.
+- **ML safety:** Hybrid rules and ML signals produce explainable risk prioritization; model retraining is guarded against replacing a model when quality degrades.
 
----
+## Quickstart
 
-## 📊 API
+### Local Docker Compose
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| GET | `/health` | Health check |
-| POST | `/register` | User registration |
-| POST | `/login` | User login |
-| POST | `/complaints` | Submit complaint with evidence |
-| GET | `/my-complaints/{id}` | User's complaint history |
-| GET | `/admin/overview` | Admin dashboard data |
-| GET | `/public/awareness` | Public anonymized statistics |
-| GET | `/admin/complaints/{id}/report` | Incident report (HTML) |
-
----
-
-## 🔐 Security
-
-- Email verification required before portal access
-- Password hashing (PBKDF2-HMAC-SHA256)
-- Session/JWT-based authentication
-- Rate limiting on authentication endpoints
-- Security headers middleware (X-Frame-Options, CSP, HSTS)
-- Input sanitization (XSS + SQL injection prevention)
-- Role-based access control
-- Audit logging for administrative actions
-
----
-
-## 🖥️ Screenshots
-
-### User Portal
-- Login
-- Registration
-- Email Verification
-
-### Complaint Submission
-- Submit Complaint
-- Complaint Submitted Successfully
-
-### Analysis Result
-- Complaint Result / Risk Analysis
-
-### Admin Dashboard
-- Admin Dashboard
-
-### Analytics / Intelligence
-- Heatmap Intelligence
-- Campaign Cluster Analysis
-
-*(Screenshot files are located in the `/screenshots` folder of the repository.)*
-
----
-
-## ⚙️ Local Development
-
-**Quick start:**
+Requires Docker Desktop with the Compose plugin.
 
 ```bash
+docker compose up --build
+```
+
+Open the user portal at <http://localhost:3000> and the API health endpoint at <http://localhost:8000/>.
+
+Stop the stack with:
+
+```bash
+docker compose down
+```
+
+Compose persists uploaded evidence in the `rakshak-evidence` named volume.
+
+### Manual development
+
+The following commands run the API and each React portal independently. Use separate terminals.
+
+```powershell
 # Backend
 cd backend
-python -m venv venv
-venv\Scripts\activate          # Windows
-# source venv/bin/activate     # Mac/Linux
-pip install -r requirements.txt
+py -m venv venv
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 uvicorn main:app --reload --host 127.0.0.1 --port 8000
-
-# User Frontend
-cd user-frontend && npm install && npm start
-
-# Admin Frontend
-cd admin-frontend && npm install && npm start
 ```
 
-```env
-API_URL=your_backend_url
+```powershell
+# User portal
+cd user-frontend
+npm install
+npm start
 ```
 
----
+```powershell
+# Admin portal
+cd admin-frontend
+npm install
+npm start
+```
 
-## 🧪 Testing
+```powershell
+# CERT portal
+cd cert-frontend
+npm install
+npm start
+```
+
+Configure frontend API and Firebase values using the environment variables documented by each portal. Never commit credentials; use `.env.example` as the template.
+
+## Testing and CI
+
+Run the backend suite locally:
 
 ```bash
 py -m pytest backend/tests/ -q
 ```
 
----
+The CI gatekeeper runs the 246-test backend suite, builds all three frontends through a Node matrix, and verifies container builds with Docker Buildx. Pull requests targeting `main` must pass all required jobs.
 
-## 🌟 Future Scope / Roadmap
+## Technology stack
 
-- [ ] Deep learning model upgrade
-- [ ] Real-time WebSocket alerts
+| Layer | Technologies |
+| --- | --- |
+| Portals | React, React Router, Firebase client SDK |
+| Edge | Nginx Alpine reverse proxy and static asset server |
+| API | FastAPI, Uvicorn, Python 3.11 |
+| Analysis | scikit-learn TF-IDF, Logistic Regression, hybrid rules, IOC extraction |
+| Storage | SQLite for local operation; PostgreSQL-compatible persistence; evidence volume |
+| Delivery | Docker Compose, GitHub Actions, Docker Buildx |
 
----
+## API surface
 
-## 👨‍💻 Author
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/health` | Health check |
+| POST | `/register` | User registration |
+| POST | `/login` | User login |
+| POST | `/complaints` | Submit a complaint with evidence |
+| GET | `/my-complaints/{id}` | Retrieve a user's complaint history |
+| GET | `/admin/overview` | Admin dashboard data |
+| GET | `/public/awareness` | Public anonymized statistics |
+| GET | `/admin/complaints/{id}/report` | Generate an incident report |
 
-**Boomesh** — Cloud Engineering | AI/ML Developer
+## Contributing
 
-*Rakshak AI — Helping citizens stay safe online.*
+Keep changes scoped, add focused tests for behavior changes, and run the backend test suite before opening a pull request. Security-sensitive changes should include the threat model, affected trust boundary, and validation strategy in the pull request description.
+
+## License and ownership
+
+Rakshak AI is maintained by [Boomesh](https://github.com/boomeshh). Refer to the repository license and contribution policy for project-specific terms.
