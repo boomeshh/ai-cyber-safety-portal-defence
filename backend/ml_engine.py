@@ -27,9 +27,6 @@ MODEL_PATH      = os.path.join(MODELS_DIR, "threat_model.pkl")
 VECTORIZER_PATH = os.path.join(MODELS_DIR, "vectorizer.pkl")
 META_PATH       = os.path.join(MODELS_DIR, "model_meta.json")
 
-LEGACY_MODEL_PATH      = os.path.join(BASE_DIR, "model.pkl")
-LEGACY_VECTORIZER_PATH = os.path.join(BASE_DIR, "vectorizer.pkl")
-
 # ---------------------------------------------------------------------------
 # Tunable constants
 # ---------------------------------------------------------------------------
@@ -117,10 +114,7 @@ def _load_artifacts() -> dict:
     if _model_cache.get("loaded"):
         return _model_cache
 
-    for m_path, v_path in [
-        (MODEL_PATH, VECTORIZER_PATH),
-        (LEGACY_MODEL_PATH, LEGACY_VECTORIZER_PATH),
-    ]:
+    for m_path, v_path in [(MODEL_PATH, VECTORIZER_PATH)]:
         if os.path.exists(m_path) and os.path.exists(v_path):
             try:
                 with open(m_path, "rb") as f:
@@ -235,6 +229,14 @@ _SEED_DATA = [
     ("Refund pending provide card number and cvv immediately", "Identity / Financial Fraud"),
     ("Investment plan available send amount now for guaranteed return", "Identity / Financial Fraud"),
     ("Send your bank details to receive the pending refund", "Identity / Financial Fraud"),
+    ("Fake defence pension message demands a transfer fee before releasing arrears", "Identity / Financial Fraud"),
+    ("Caller claims army canteen account is frozen and requests ATM PIN and OTP", "Identity / Financial Fraud"),
+    ("Fraudulent welfare scholarship notice asks for card number and registration payment", "Identity / Financial Fraud"),
+    ("Investment agent promises guaranteed defence fund returns after an immediate deposit", "Identity / Financial Fraud"),
+    ("Imposter support officer requests CVV to process a salary reimbursement", "Identity / Financial Fraud"),
+    ("Lottery notification asks for bank credentials and tax payment to claim winnings", "Identity / Financial Fraud"),
+    ("Fake ECHS renewal service requests Aadhaar and a processing charge", "Identity / Financial Fraud"),
+    ("Message promises a canteen refund but asks for account login and OTP", "Identity / Financial Fraud"),
     ("Please send your regiment details and posting location", "Espionage / OPSEC Risk"),
     ("Can you share deployment movement details urgently", "Espionage / OPSEC Risk"),
     ("Send confidential unit information for verification", "Espionage / OPSEC Risk"),
@@ -250,11 +252,74 @@ _SEED_DATA = [
     ("Install this app for secure military communication", "Malware / APK Threat"),
     ("Download executable file to unlock report", "Malware / APK Threat"),
     ("Attached file contains urgent classified update install now", "Malware / APK Threat"),
+    ("Suspicious APK claims to provide a secure unit communication channel", "Malware / APK Threat"),
+    ("Open this compressed attachment to read the confidential pay notice", "Malware / APK Threat"),
+    ("Download the executable welfare form from this unverified message", "Malware / APK Threat"),
+    ("Install the attached application to unlock your defence account", "Malware / APK Threat"),
+    ("Unknown sender offers a military document inside a password-protected archive", "Malware / APK Threat"),
+    ("A fake security update asks personnel to install an APK immediately", "Malware / APK Threat"),
+    ("Message contains a suspicious macro document requesting application access", "Malware / APK Threat"),
+    ("Untrusted contact sends a zip archive labelled classified operations", "Malware / APK Threat"),
+    ("Download a fake secure messenger from this unsolicited defence link", "Malware / APK Threat"),
+    ("Attachment promises a promotion list but requires running an executable", "Malware / APK Threat"),
+    ("Please send your regiment details and posting location", "Espionage / OPSEC Risk"),
+    ("Can you share deployment movement details urgently", "Espionage / OPSEC Risk"),
+    ("Send confidential unit information for verification", "Espionage / OPSEC Risk"),
+    ("Classified document attached please review and confirm", "Espionage / OPSEC Risk"),
+    ("Share your unit location and strength for the report", "Espionage / OPSEC Risk"),
+    ("An unknown contact asks for convoy routes and exercise timings", "Espionage / OPSEC Risk"),
+    ("A message requests photographs of restricted base facilities", "Espionage / OPSEC Risk"),
+    ("Someone asks for the duty roster and names of deployed personnel", "Espionage / OPSEC Risk"),
+    ("A stranger requests internal defence reports for a survey", "Espionage / OPSEC Risk"),
+    ("Unknown sender asks for access control procedures at the base", "Espionage / OPSEC Risk"),
+    ("Message requests confidential communications logs from the unit", "Espionage / OPSEC Risk"),
+    ("Contact asks for the location of military vehicles and equipment", "Espionage / OPSEC Risk"),
+    ("A request asks personnel to disclose restricted operational plans", "Espionage / OPSEC Risk"),
+    ("Unknown person asks about upcoming exercises and readiness levels", "Espionage / OPSEC Risk"),
+    ("Suspicious survey requests names and ranks of unit members", "Espionage / OPSEC Risk"),
+    ("Let us continue this conversation on private video call", "Honeytrap / Romance Manipulation"),
+    ("I am your online friend please trust me and send documents", "Honeytrap / Romance Manipulation"),
+    ("She wants to meet you privately send your location", "Honeytrap / Romance Manipulation"),
+    ("Romance scam victim sent money to online contact", "Honeytrap / Romance Manipulation"),
+    ("My friend wants to meet you please share your number", "Honeytrap / Romance Manipulation"),
+    ("A new online admirer asks for private workplace photographs", "Honeytrap / Romance Manipulation"),
+    ("Someone claiming affection pressures me to keep our chat secret", "Honeytrap / Romance Manipulation"),
+    ("An online friend requests money after building personal trust", "Honeytrap / Romance Manipulation"),
+    ("Unknown profile sends romantic messages and asks for my home address", "Honeytrap / Romance Manipulation"),
+    ("A stranger claims to be an officer and requests a private meeting", "Honeytrap / Romance Manipulation"),
+    ("Online contact asks for sensitive documents as proof of trust", "Honeytrap / Romance Manipulation"),
+    ("Romantic contact requests bank details to arrange an urgent gift", "Honeytrap / Romance Manipulation"),
+    ("Unknown person pressures me to share personal photos privately", "Honeytrap / Romance Manipulation"),
+    ("Online relationship becomes a request for financial assistance", "Honeytrap / Romance Manipulation"),
+    ("Contact claims a family emergency and asks for money after flirting", "Honeytrap / Romance Manipulation"),
+    ("Meeting scheduled tomorrow at 5 pm please attend", "Unknown / Needs Review"),
+    ("Project discussion completed successfully", "Unknown / Needs Review"),
+    ("Please call me when you are free", "Unknown / Needs Review"),
+    ("The report has been submitted to the faculty", "Unknown / Needs Review"),
+    ("Class starts at 9 am tomorrow", "Unknown / Needs Review"),
+    ("The routine team briefing is scheduled for Monday morning", "Unknown / Needs Review"),
+    ("Please review the ordinary project minutes before the meeting", "Unknown / Needs Review"),
+    ("The office document was delivered to the records department", "Unknown / Needs Review"),
+    ("Family plans are confirmed for the weekend", "Unknown / Needs Review"),
+    ("The training session will begin after the lunch break", "Unknown / Needs Review"),
+    ("Please confirm attendance for the routine administrative call", "Unknown / Needs Review"),
+    ("The monthly progress report is ready for normal review", "Unknown / Needs Review"),
+    ("A colleague shared the harmless agenda for tomorrow's meeting", "Unknown / Needs Review"),
+    ("The scheduled maintenance notice was circulated to the team", "Unknown / Needs Review"),
+    ("Please bring the approved paperwork to the office", "Unknown / Needs Review"),
     ("Please install this apk to access your welfare benefits", "Malware / APK Threat"),
     ("Suspicious message received from unknown number", "Suspicious Communication"),
     ("Unknown caller asked for personal details", "Suspicious Communication"),
     ("Received strange link from unknown contact", "Suspicious Communication"),
     ("Someone is asking for my personal information repeatedly", "Suspicious Communication"),
+    ("Unverified caller asks about my duty schedule without identifying themselves", "Suspicious Communication"),
+    ("Unknown Telegram account requests my phone number and private contact list", "Suspicious Communication"),
+    ("Stranger sends an unexplained attachment and insists I reply privately", "Suspicious Communication"),
+    ("Unfamiliar sender asks about my current assignment and family details", "Suspicious Communication"),
+    ("Suspicious voice call claims to know my supervisor but gives no verification", "Suspicious Communication"),
+    ("Unknown contact repeatedly asks when I will be away from home", "Suspicious Communication"),
+    ("Unverified profile requests my service number for an unclear survey", "Suspicious Communication"),
+    ("Unexpected message asks me to move the conversation to a private channel", "Suspicious Communication"),
     ("Meeting scheduled tomorrow at 5 pm please attend", "Unknown / Needs Review"),
     ("Project discussion completed successfully", "Unknown / Needs Review"),
     ("Please call me when you are free", "Unknown / Needs Review"),
