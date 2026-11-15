@@ -10,12 +10,24 @@ Provides a FastAPI-compatible dependency `verify_firebase_token` that:
 Singleton pattern: Firebase App is initialised once per process.
 
 Test / CI environment:
-  Set the env var RAKSHAK_TESTING=1 (or any truthy value) to skip real
-  Firebase initialisation.  Tests patch firebase_admin.auth.verify_id_token
-  directly via unittest.mock — no live Google network calls are made.
+  Set the env var RAKSHAK_TESTING=1 (strict truthy: "1", "true", "yes", "on")
+  to skip real Firebase initialisation.  Tests patch
+  firebase_admin.auth.verify_id_token directly via unittest.mock — no live
+  Google network calls are made.
+
+SECURITY NOTE — __test_bypass__ token:
+  The literal token "__test_bypass__" is ONLY accepted when BOTH of the
+  following are true simultaneously:
+    1. _is_truthy_env("RAKSHAK_TESTING") is True  (strict: "1"/"true"/"yes"/"on")
+    2. pytest is actively running        ("pytest" in sys.modules)
+  Setting RAKSHAK_TESTING="0", "false", "no", or "off" is NEVER truthy and
+  will NEVER activate the bypass — even when the env var is set.
+  This eliminates the production bypass risk introduced by any docker-compose
+  line that sets RAKSHAK_TESTING=0.
 """
 
 import os
+import sys
 import logging
 from functools import lru_cache
 
@@ -23,6 +35,22 @@ from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger("firebase_auth")
+
+# ---------------------------------------------------------------------------
+# Strict truthy helper — only "1", "true", "yes", "on" (case-insensitive)
+# are considered truthy.  "0", "false", "no", "off", "", or anything else
+# evaluates to False.  This prevents RAKSHAK_TESTING=0 from activating
+# test-only code paths.
+# ---------------------------------------------------------------------------
+
+def _is_truthy_env(name: str) -> bool:
+    """Return True only for explicit truthy values of an environment variable.
+
+    Accepted truthy values (case-insensitive): "1", "true", "yes", "on".
+    Everything else — including "0", "false", "no", "off" — returns False.
+    """
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
 
 # ---------------------------------------------------------------------------
 # Lazy import of firebase_admin so the module can be imported even when the
@@ -144,12 +172,18 @@ def verify_firebase_token(
             detail="Missing or invalid authentication credentials",
         )
 
-    # ── 2. Test / CI shortcut — env var skips Firebase, never in production ─
-    #    Tests patch firebase_admin.auth.verify_id_token directly;
-    #    this branch is only reached if that patch raises or the token is
-    #    literally "__test_bypass__" which no test uses.
-    #    (Kept here as a last-resort escape hatch; guarded by env var.)
-    if os.getenv("RAKSHAK_TESTING") and token == "__test_bypass__":  # pragma: no cover
+    # ── 2. Test / CI shortcut ───────────────────────────────────────────────
+    # The __test_bypass__ token is ONLY accepted when:
+    #   a) RAKSHAK_TESTING is strictly truthy ("1"/"true"/"yes"/"on"), AND
+    #   b) pytest is currently running ("pytest" in sys.modules).
+    # Both conditions must hold simultaneously.  This means:
+    #   - RAKSHAK_TESTING=0 in docker-compose → _is_truthy_env returns False → bypass never fires
+    #   - Running the production server without pytest → "pytest" not in sys.modules → bypass never fires
+    if (
+        token == "__test_bypass__"
+        and _is_truthy_env("RAKSHAK_TESTING")
+        and "pytest" in sys.modules
+    ):  # pragma: no cover
         return {"uid": "test-uid", "email": "test@example.com"}
 
     # ── 3. Ensure firebase-admin is available ───────────────────────────────
@@ -163,7 +197,7 @@ def verify_firebase_token(
     # ── 4. Ensure Firebase App is initialised (no-op in test with mock) ─────
     #    We only skip _get_firebase_app() when running tests (env var set) so
     #    unit tests don't need GCP credentials.
-    if not os.getenv("RAKSHAK_TESTING"):
+    if not _is_truthy_env("RAKSHAK_TESTING"):
         _get_firebase_app()  # pragma: no cover
 
     # ── 5. Verify the token ─────────────────────────────────────────────────

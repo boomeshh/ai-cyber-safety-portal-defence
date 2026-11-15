@@ -3,15 +3,19 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-WORKDIR /app
-
-RUN groupadd --gid 10001 appuser \
+# Create non-root user BEFORE WORKDIR so we can chown the app directory
+RUN groupadd --gid 10001 appgroup \
     && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin appuser
+
+WORKDIR /app
 
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir -r requirements.txt
 
-COPY --chown=appuser:appuser . .
+COPY . .
+
+# chown runs AFTER WORKDIR /app so appuser has write access to create complaints.db
+RUN chown -R appuser:appgroup /app
 
 USER appuser
 

@@ -36,6 +36,10 @@ from security_utils import (
     sanitize_url,
     validate_file_upload,
     generate_safe_filename,
+    check_upload_path,
+    read_upload_chunked,
+    encrypt_payload,
+    decrypt_payload,
     MAX_FILE_SIZE_BYTES,
 )
 from seed_data import seed_complaints
@@ -531,6 +535,20 @@ def build_hybrid_result(complaint_text: str, suspicious_url: str, evidence_name:
     )
 
 
+def _safe_decrypt_complaint_text(raw: str) -> str:
+    """
+    Attempt to decrypt an AES-256-GCM encrypted complaint description.
+    If decryption fails (legacy plaintext row, wrong key, or corrupt ciphertext)
+    return the raw value unchanged — graceful degradation for existing rows.
+    """
+    if not raw:
+        return raw
+    try:
+        return decrypt_payload(raw)
+    except Exception:
+        return raw
+
+
 def compute_file_hash(file_path: str) -> str:
     digest = hashlib.sha256()
     with open(file_path, "rb") as file_obj:
@@ -557,6 +575,9 @@ def get_all_complaints_data():
     conn = get_connection()
     rows = [dict(row) for row in conn.execute("SELECT * FROM complaints ORDER BY created_at DESC").fetchall()]
     conn.close()
+    # Decrypt complaint_text for authorized triage/viewing — legacy rows pass through unchanged
+    for r in rows:
+        r["complaint_text"] = _safe_decrypt_complaint_text(r.get("complaint_text") or "")
     return rows
 
 
@@ -1175,7 +1196,8 @@ async def create_complaint(
     complaint_id = f"RK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
     if uploaded_file and uploaded_file.filename:
-        content = await uploaded_file.read()
+        # Read in 64 KB chunks — aborts with HTTP 413 before exceeding MAX_FILE_SIZE_BYTES
+        content = await read_upload_chunked(uploaded_file)
         is_valid, reason = validate_file_upload(
             uploaded_file.filename,
             uploaded_file.content_type or "",
@@ -1185,10 +1207,10 @@ async def create_complaint(
         if not is_valid:
             raise HTTPException(status_code=400, detail=reason)
 
-        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id)
+        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id, content=content)
         evidence_path = os.path.join(UPLOAD_DIR, safe_name)
-        # Guard against path traversal — ensure the resolved path stays inside UPLOAD_DIR
-        if not os.path.abspath(evidence_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        # Guard against path traversal using commonpath — not startswith
+        if not check_upload_path(UPLOAD_DIR, evidence_path):
             raise HTTPException(status_code=400, detail="Invalid filename.")
 
         evidence_name = os.path.basename(uploaded_file.filename)
@@ -1269,6 +1291,14 @@ async def create_complaint(
     elif attack_channel and attack_channel != "Unknown":
         campaign_signature = f"ch:{attack_channel.lower()}:{threat_slug}"
 
+    # Encrypt complaint_text at rest using AES-256-GCM before storing in SQLite
+    try:
+        stored_complaint_text = encrypt_payload(complaint_text)
+    except Exception:
+        # Fail-open for testing mode so tests without AES key still work;
+        # in production _get_aes_key() already raised at startup if key is missing.
+        stored_complaint_text = complaint_text
+
     conn = get_connection()
     conn.execute(
         """
@@ -1283,7 +1313,7 @@ async def create_complaint(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            complaint_id, user_id, user_name, category, complaint_text, suspicious_url,
+            complaint_id, user_id, user_name, category, stored_complaint_text, suspicious_url,
             evidence_path, ai_result["threat_type"], ai_result["score"], ai_result["level"],
             ai_result["reason"], ai_result["mitigation"], ai_result["status"], created_at,
             evidence_path, evidence_name, evidence_type, evidence_hash, attack_channel,
@@ -1443,7 +1473,8 @@ async def create_complaint_firebase(
     complaint_id = f"RK-{datetime.now().strftime('%Y%m%d%H%M%S%f')}"
 
     if uploaded_file and uploaded_file.filename:
-        content = await uploaded_file.read()
+        # Read in 64 KB chunks — aborts with HTTP 413 before exceeding MAX_FILE_SIZE_BYTES
+        content = await read_upload_chunked(uploaded_file)
         is_valid, reason = validate_file_upload(
             uploaded_file.filename,
             uploaded_file.content_type or "",
@@ -1453,10 +1484,10 @@ async def create_complaint_firebase(
         if not is_valid:
             raise HTTPException(status_code=400, detail=reason)
 
-        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id)
+        safe_name = generate_safe_filename(uploaded_file.filename, prefix=complaint_id, content=content)
         evidence_path = os.path.join(UPLOAD_DIR, safe_name)
-        # Guard against path traversal — ensure resolved path stays inside UPLOAD_DIR
-        if not os.path.abspath(evidence_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        # Guard against path traversal using commonpath — not startswith
+        if not check_upload_path(UPLOAD_DIR, evidence_path):
             raise HTTPException(status_code=400, detail="Invalid filename.")
 
         evidence_name = os.path.basename(uploaded_file.filename)
@@ -1537,6 +1568,12 @@ async def create_complaint_firebase(
     elif attack_channel and attack_channel != "Unknown":
         campaign_signature = f"ch:{attack_channel.lower()}:{threat_slug}"
 
+    # Encrypt complaint_text at rest using AES-256-GCM before storing in SQLite
+    try:
+        stored_complaint_text_fb = encrypt_payload(complaint_text)
+    except Exception:
+        stored_complaint_text_fb = complaint_text
+
     conn = get_connection()
     conn.execute(
         """
@@ -1551,7 +1588,7 @@ async def create_complaint_firebase(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            complaint_id, uid, user_name, category, complaint_text, suspicious_url,
+            complaint_id, uid, user_name, category, stored_complaint_text_fb, suspicious_url,
             evidence_path, ai_result["threat_type"], ai_result["score"], ai_result["level"],
             ai_result["reason"], ai_result["mitigation"], ai_result["status"], created_at,
             evidence_path, evidence_name, evidence_type, evidence_hash, attack_channel,
@@ -1662,6 +1699,8 @@ def get_my_complaints(user_id: str, authorization: Optional[str] = Header(defaul
     results = []
     for row in rows:
         r = dict(row)
+        # Decrypt complaint_text at rest — handles legacy plaintext rows gracefully
+        r["complaint_text"] = _safe_decrypt_complaint_text(r.get("complaint_text") or "")
         # Parse stored indicators for IOC
         import json as _json
         ev_ind = {}

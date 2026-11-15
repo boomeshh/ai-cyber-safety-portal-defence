@@ -337,9 +337,21 @@ def build_controlled_training_dataset(
 ) -> tuple[list, list, dict]:
     """
     Build the final training dataset with a controlled synthetic ratio.
+
+    When use_synthetic=False the function is 100% reproducible purely from
+    the committed _SEED_DATA constant — it never reads complaints.db for
+    real complaint rows so the result is identical on any machine that has
+    only the repository checked out (no local database required).
+
     Returns (texts, labels, stats_dict).
     """
-    real_texts, real_labels = load_real_training_samples(db_path)
+    # Only load real DB rows when synthetic path is active; seed data is always
+    # included and is fully committed to the repository.
+    if use_synthetic:
+        real_texts, real_labels = load_real_training_samples(db_path)
+    else:
+        # Reproducibility guarantee: use ONLY the committed seed corpus.
+        real_texts, real_labels = [], []
 
     # Merge seed data (deduplicate by text)
     seen: set = set(real_texts)

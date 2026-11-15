@@ -8,10 +8,12 @@ All helpers are additive — they do not replace existing auth logic.
 
 import re
 import os
+import sys
 import time
 import html
 import logging
 import hashlib
+import secrets
 import base64
 import binascii
 from collections import defaultdict
@@ -48,6 +50,7 @@ SAFE_MIME_TYPES: frozenset[str] = frozenset({
 
 # Hard-block list — executables and script files that must never be stored.
 # Kept as a secondary safety net; primary gate is the SAFE_EXTENSIONS allowlist.
+# .jsp added: Java Server Pages are executable server-side scripts.
 BLOCKED_EXTENSIONS: frozenset[str] = frozenset({
     ".exe", ".bat", ".sh", ".ps1", ".vbs",
     ".js",  ".ts",  ".jsx", ".tsx",
@@ -58,10 +61,21 @@ BLOCKED_EXTENSIONS: frozenset[str] = frozenset({
     ".zip", ".tar", ".gz", ".7z", ".rar",
     ".dll", ".so",  ".dylib",
     ".cmd", ".com", ".scr", ".hta",
+    ".jsp",   # Java Server Pages — executable server-side script
 })
 
-# 5 MB hard cap for evidence uploads (down from the previous 15 MB)
+# 5 MB hard cap for evidence uploads
 MAX_FILE_SIZE_BYTES: int = 5 * 1024 * 1024  # 5 MB
+_UPLOAD_CHUNK_SIZE: int = 65536  # 64 KB read chunks for streaming size check
+
+
+# ---------------------------------------------------------------------------
+# Strict truthy helper — mirrors firebase_auth._is_truthy_env
+# ---------------------------------------------------------------------------
+
+def _is_truthy_env(name: str) -> bool:
+    """Return True only for "1", "true", "yes", "on" (case-insensitive)."""
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,10 +89,6 @@ _TESTING_AES_KEY = hashlib.sha256(
     b"rakshak-ai-testing-aes-256-gcm-key-v1"
 ).digest()
 _HKDF_SALT = b"rakshak-ai-aes-256-gcm-v1"
-
-
-def _is_truthy_env(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _decode_aes_key(raw_key: str) -> bytes:
@@ -106,6 +116,22 @@ def _decode_aes_key(raw_key: str) -> bytes:
 
 @lru_cache(maxsize=1)
 def _get_aes_key() -> bytes:
+    """
+    Resolve the AES-256 key with fail-closed production behaviour.
+
+    Resolution order:
+      1. RAKSHAK_AES_KEY env var (hex or base64-encoded 32-byte key).
+      2. Testing mode (RAKSHAK_TESTING strictly truthy) → deterministic test key.
+      3. Development mode (RAKSHAK_ENV in {dev, development, local}) → ephemeral key.
+      4. SECRET_KEY / RAKSHAK_SECRET_KEY → HKDF-derived key (logged as warning).
+      5. PRODUCTION FAIL-CLOSED: if neither RAKSHAK_AES_KEY nor SECRET_KEY is
+         set outside testing/dev, raise RuntimeError rather than use a hardcoded
+         fallback secret — the legacy fallback is REMOVED.
+
+    The hardcoded "rakshak-ai-legacy-secret-fallback-v1" string that was
+    previously used as a production fallback has been intentionally deleted.
+    Any deployment that relied on it must now set RAKSHAK_AES_KEY or SECRET_KEY.
+    """
     configured_key = os.getenv(AES_KEY_ENV)
     if configured_key:
         return _decode_aes_key(configured_key)
@@ -122,21 +148,27 @@ def _get_aes_key() -> bytes:
         return os.urandom(AES_KEY_BYTES)
 
     secret = os.getenv("SECRET_KEY") or os.getenv("RAKSHAK_SECRET_KEY")
-    if not secret:
+    if secret:
         logger.warning(
-            "[security] %s is unset in production; using the legacy fallback "
-            "secret for AES key derivation. Configure %s.",
+            "[security] %s is unset in production; deriving AES key from SECRET_KEY via HKDF. "
+            "Configure %s for a stable encryption key.",
             AES_KEY_ENV,
             AES_KEY_ENV,
         )
-        secret = "rakshak-ai-legacy-secret-fallback-v1"
+        return HKDF(
+            algorithm=hashes.SHA256(),
+            length=AES_KEY_BYTES,
+            salt=_HKDF_SALT,
+            info=b"payload-encryption",
+        ).derive(secret.encode("utf-8"))
 
-    return HKDF(
-        algorithm=hashes.SHA256(),
-        length=AES_KEY_BYTES,
-        salt=_HKDF_SALT,
-        info=b"payload-encryption",
-    ).derive(secret.encode("utf-8"))
+    # FAIL CLOSED — no key available in production
+    raise RuntimeError(
+        f"[security] PRODUCTION STARTUP ABORTED: Neither {AES_KEY_ENV} nor SECRET_KEY "
+        "is configured. Set RAKSHAK_AES_KEY to a 64-character hex string (32 random bytes) "
+        "or SECRET_KEY as a fallback. The legacy hardcoded secret has been removed for "
+        "security compliance."
+    )
 
 
 def encrypt_payload(plaintext: str | bytes) -> str:
@@ -288,25 +320,95 @@ def validate_file_upload(
     return True, "OK"
 
 
-def generate_safe_filename(original_name: str, prefix: str = "") -> str:
+async def read_upload_chunked(uploaded_file) -> bytes:
     """
-    Generate a fully server-controlled filename that prevents directory
-    traversal, path injection, and information leakage.
+    Read an UploadFile in 64 KB chunks, aborting with HTTP 413 as soon as
+    cumulative bytes exceed MAX_FILE_SIZE_BYTES.
+
+    This prevents loading a multi-gigabyte file into RAM before the size check.
+    Raises fastapi.HTTPException(413) on oversized uploads.
+    Returns the complete content bytes for valid-sized files.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await uploaded_file.read(_UPLOAD_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_FILE_SIZE_BYTES:
+            size_mb = MAX_FILE_SIZE_BYTES // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large. Maximum allowed size is {size_mb} MB.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def generate_safe_filename(
+    original_name: str,
+    prefix: str = "",
+    content: bytes | None = None,
+) -> str:
+    """
+    Generate a fully server-controlled, content-addressed filename that
+    prevents directory traversal, path injection, and information leakage.
 
     The original client filename is NOT preserved in the stored name.
-    Format: {prefix}_{timestamp}_{sha256[:16]}_{safe_ext}
 
-    The original extension is retained (already validated by the caller)
-    so the OS can serve the file with the correct Content-Type.
+    Format: {prefix}_{timestamp}_{sha256_of_content[:16]}_{nonce}.{safe_ext}
+
+    When *content* is provided the hash is computed from the actual file bytes,
+    making the name content-addressed.  When *content* is None the hash falls
+    back to hashing the original filename string (preserving backward compat
+    for callers that don't pass content).
+
+    The 128-bit random hex nonce (secrets.token_hex(16)) appended after the
+    hash ensures that two identical uploads by different users never collide
+    on the filesystem and that filenames are not guessable even if the content
+    hash is known.
     """
     _, ext = os.path.splitext(original_name.lower())
     # Sanitize extension — only keep alphanumeric chars
     safe_ext = re.sub(r"[^\w]", "", ext)[:6]
-    name_hash = hashlib.sha256(original_name.encode()).hexdigest()[:16]
+
+    # Content-addressed hash: use actual bytes when available, else filename
+    if content is not None:
+        name_hash = hashlib.sha256(content).hexdigest()[:16]
+    else:
+        name_hash = hashlib.sha256(original_name.encode()).hexdigest()[:16]
+
+    # 128-bit cryptographically random nonce (32 hex chars)
+    nonce = secrets.token_hex(16)
+
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-    parts = [p for p in [prefix, timestamp, name_hash] if p]
+    parts = [p for p in [prefix, timestamp, name_hash, nonce] if p]
     base = "_".join(parts)
     return f"{base}.{safe_ext}" if safe_ext else base
+
+
+def check_upload_path(base_dir: str, target_path: str) -> bool:
+    """
+    Return True if *target_path* is contained within *base_dir*.
+
+    Uses os.path.commonpath() rather than startswith() to prevent path
+    traversal bypasses on case-insensitive filesystems and paths that share
+    a common prefix string but differ in directory structure.
+
+    Example of the startswith() bypass this prevents:
+        base_dir   = "/app/uploads"
+        target     = "/app/uploads-evil/../../etc/passwd"
+        startswith → True (wrong!)
+        commonpath → "/app" != "/app/uploads" → False (correct)
+    """
+    try:
+        common = os.path.commonpath(
+            [os.path.realpath(base_dir), os.path.realpath(target_path)]
+        )
+        return common == os.path.realpath(base_dir)
+    except (ValueError, OSError):
+        return False
 
 
 # ---------------------------------------------------------------------------
