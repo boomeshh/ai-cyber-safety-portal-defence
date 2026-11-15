@@ -35,11 +35,13 @@ import firebase_auth
 import ml_engine
 from security_utils import (
     MAX_FILE_SIZE_BYTES,
+    BLOCKED_EXTENSIONS,
     encrypt_payload,
     generate_safe_filename,
     sanitize_text,
     validate_file_upload,
 )
+from rule_engine import calculate_rule_risk
 
 logging.getLogger("firebase_auth").setLevel(logging.CRITICAL)
 logging.getLogger("ml_engine").setLevel(logging.CRITICAL)
@@ -314,63 +316,20 @@ def _run_ml_benchmark() -> tuple[list[str], list[list[object]]]:
     if set(corpus) != set(labels):
         raise RuntimeError("Benchmark corpus must cover every exact ML threat label")
 
-    # ---------------------------------------------------------------------------
-    # Lightweight keyword rule engine — mirrors main.calculate_rule_risk without
-    # importing main.py (avoids DB seeding at import time).
-    # ---------------------------------------------------------------------------
-    _KEYWORD_WEIGHTS: list[tuple[str, int]] = [
-        ("otp", 25), ("password", 25), ("bank", 20), ("login", 18),
-        ("verify", 16), ("urgent", 12), ("immediately", 10), ("suspended", 15),
-        ("click", 10), ("army", 20), ("defence", 20), ("classified", 28),
-        ("deployment", 18), ("location", 12), ("apk", 22), ("attachment", 14),
-        ("romance", 18), ("video call", 18), ("refund", 14), ("cvv", 20),
-        ("card", 12), ("transfer", 12), ("confidential", 16), ("espionage", 28),
-    ]
-
-    def _build_rule_result(text: str) -> dict:
-        lower = text.lower()
-        score = 20
-        tags: set = set()
-        indicators: list = []
-        for kw, weight in _KEYWORD_WEIGHTS:
-            if kw in lower:
-                score += weight
-                indicators.append(f"keyword: {kw}")
-        # Assign tags by keyword families
-        if any(k in lower for k in ("otp", "password", "bank", "login", "verify", "click")):
-            tags.add("Phishing")
-        if any(k in lower for k in ("apk", "attachment", "executable", "archive")):
-            tags.add("Malware / APK Threat")
-        if any(k in lower for k in ("classified", "deployment", "location", "confidential", "espionage")):
-            tags.add("Espionage / OPSEC Risk")
-        if any(k in lower for k in ("romance", "video call", "meet", "trust")):
-            tags.add("Honeytrap / Romance Manipulation")
-        if any(k in lower for k in ("refund", "card", "cvv", "transfer", "fee", "bank information")):
-            tags.add("Identity / Financial Fraud")
-        if any(k in lower for k in ("suspicious", "unknown caller", "strange")):
-            tags.add("Suspicious Communication")
-        if not tags:
-            tags.add("Suspicious Communication")
-        return {
-            "rule_score": min(score, 100),
-            "indicators": indicators[:5],
-            "risk_notes": [],
-            "tags": tags,
-        }
-
     # Warm the lazy model cache so inference timings exclude model loading.
     ml_engine.hybrid_analyze_complaint(
         "warm up the threat triage model",
-        rule_result=_build_rule_result("warm up"),
+        rule_result=calculate_rule_risk("warm up", ""),
     )
 
     # ── 3a: Full hybrid path ─────────────────────────────────────────────
     observations: list[tuple[str, str, float]] = []
+    ml_observations: list[tuple[str, str, float]] = []
     for expected, bases in corpus.items():
         for base in bases:
             for variant in variants:
                 text = f"{base} {variant}."
-                rule_result = _build_rule_result(text)
+                rule_result = calculate_rule_risk(text, "")
                 start = time.perf_counter_ns()
                 result = ml_engine.hybrid_analyze_complaint(
                     complaint_text=text,
@@ -378,6 +337,10 @@ def _run_ml_benchmark() -> tuple[list[str], list[list[object]]]:
                 )
                 latency = _milliseconds(start, time.perf_counter_ns())
                 observations.append((expected, result["threat_type"], latency))
+                start = time.perf_counter_ns()
+                ml_result = ml_engine.predict_threat_ml(text)
+                ml_latency = _milliseconds(start, time.perf_counter_ns())
+                ml_observations.append((expected, ml_result["label"], ml_latency))
 
     if any(
         sum(expected == label for expected, _, _ in observations) != len(variants) * 3
@@ -386,6 +349,7 @@ def _run_ml_benchmark() -> tuple[list[str], list[list[object]]]:
         raise RuntimeError("Benchmark corpus is not balanced")
 
     headers = [
+        "Evaluation path",
         "Threat label",
         "Support",
         "Correct",
@@ -395,92 +359,68 @@ def _run_ml_benchmark() -> tuple[list[str], list[list[object]]]:
         "Mean hybrid inference latency (ms)",
     ]
     rows: list[list[object]] = []
-    for label in labels:
-        true_positive = sum(
-            expected == label and predicted == label
-            for expected, predicted, _ in observations
-        )
-        false_positive = sum(
-            expected != label and predicted == label
-            for expected, predicted, _ in observations
-        )
-        false_negative = sum(
-            expected == label and predicted != label
-            for expected, predicted, _ in observations
-        )
-        support = true_positive + false_negative
-        precision = (
-            true_positive / (true_positive + false_positive)
-            if true_positive + false_positive
-            else 0.0
-        )
-        recall = true_positive / support if support else 0.0
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if precision + recall
-            else 0.0
-        )
-        latencies = [
-            latency for expected, _, latency in observations if expected == label
-        ]
-        rows.append([
-            label,
-            support,
-            true_positive,
-            f"{precision:.4f}",
-            f"{recall:.4f}",
-            f"{f1:.4f}",
-            f"{statistics.mean(latencies):.4f}",
+    for path, path_observations in (
+        ("Full Production Hybrid", observations),
+        ("ML-Only Ablation", ml_observations),
+    ):
+        path_rows = []
+        for label in labels:
+            true_positive = sum(
+                expected == label and predicted == label
+                for expected, predicted, _ in path_observations
+            )
+            false_positive = sum(
+                expected != label and predicted == label
+                for expected, predicted, _ in path_observations
+            )
+            false_negative = sum(
+                expected == label and predicted != label
+                for expected, predicted, _ in path_observations
+            )
+            support = true_positive + false_negative
+            precision = true_positive / (true_positive + false_positive) if true_positive + false_positive else 0.0
+            recall = true_positive / support if support else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+            latencies = [latency for expected, _, latency in path_observations if expected == label]
+            path_rows.append([
+                path, label, support, true_positive, f"{precision:.4f}",
+                f"{recall:.4f}", f"{f1:.4f}", f"{statistics.mean(latencies):.4f}",
+            ])
+        rows.extend(path_rows)
+        total = len(path_observations)
+        macro_precision = statistics.mean(float(row[4]) for row in path_rows)
+        macro_recall = statistics.mean(float(row[5]) for row in path_rows)
+        macro_f1 = statistics.mean(float(row[6]) for row in path_rows)
+        accuracy = sum(expected == predicted for expected, predicted, _ in path_observations) / total
+        weighted_f1 = sum(int(row[2]) * float(row[6]) for row in path_rows) / total
+        rows.extend([
+            [path, "Macro average", total, "", f"{macro_precision:.4f}",
+             f"{macro_recall:.4f}", f"{macro_f1:.4f}",
+             f"{statistics.mean(item[2] for item in path_observations):.4f}"],
+            [path, "Weighted F1 / accuracy", total, f"{accuracy:.4f}", "", "",
+             f"{weighted_f1:.4f}", ""],
         ])
-
-    macro_precision = statistics.mean(float(row[3]) for row in rows)
-    macro_recall = statistics.mean(float(row[4]) for row in rows)
-    macro_f1 = statistics.mean(float(row[5]) for row in rows)
-    total = len(observations)
-    accuracy = sum(expected == predicted for expected, predicted, _ in observations) / total
-    weighted_f1 = sum(
-        int(row[1]) * float(row[5]) for row in rows
-    ) / total
-    rows.extend([
-        [
-            "Macro average",
-            total,
-            "",
-            f"{macro_precision:.4f}",
-            f"{macro_recall:.4f}",
-            f"{macro_f1:.4f}",
-            f"{statistics.mean(item[2] for item in observations):.4f}",
-        ],
-        [
-            "Weighted F1 / accuracy",
-            total,
-            f"{accuracy:.4f}",
-            "",
-            "",
-            f"{weighted_f1:.4f}",
-            "",
-        ],
-    ])
 
     # ── 3b: Extension-only baseline ─────────────────────────────────────
     # Empirical evaluation against the three disguised-upload test cases from
     # Benchmark 1.  A naive extension-only filter would pass invoice.php.jpg
     # (declared .jpg) but our magic-byte + blocked-intermediate-extension check
     # catches all three.
-    _disguised_cases: list[tuple[str, str, bytes]] = [
-        ("invoice.php.jpg", "image/jpeg", b"<?php echo 'polyglot';"),
-        ("update.exe",       "application/octet-stream", b"MZ\x90\x00"),
-        ("report.html",      "image/png",  b"<script>alert(1)</script>"),
+    _disguised_cases: list[str] = [
+        "shell.php.jpg", "invoice.exe.pdf", "backdoor.jsp.png",
+        "script.sh.txt", "payload.js.jpeg", "macro.vbs.pdf",
+        "dropper.apk.jpg", "archive.zip.png", "webshell.aspx.jpg",
+        "loader.dll.pdf", "command.ps1.txt", "report.html.png",
     ]
     _ext_blocked = 0
     _ext_total = len(_disguised_cases)
-    for fname, mime, content in _disguised_cases:
-        accepted, _ = validate_file_upload(fname, mime, len(content), content)
-        _ext_blocked += int(not accepted)
+    for fname in _disguised_cases:
+        _ext_blocked += int(Path(fname).suffix.lower() in BLOCKED_EXTENSIONS)
 
     _ext_accuracy = _ext_blocked / _ext_total if _ext_total else 0.0
     rows.append([
-        "— Extension-only baseline (disguised uploads)",
+        "Baseline",
+        "Extension-only baseline (12 disguised uploads)",
         _ext_total,
         _ext_blocked,
         f"{_ext_accuracy:.4f}",

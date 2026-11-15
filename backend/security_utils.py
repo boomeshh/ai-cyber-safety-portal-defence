@@ -171,6 +171,11 @@ def _get_aes_key() -> bytes:
     )
 
 
+def validate_crypto_config() -> None:
+    """Validate encryption configuration during application startup."""
+    _get_aes_key()
+
+
 def encrypt_payload(plaintext: str | bytes) -> str:
     """Encrypt a UTF-8 string or bytes with AES-256-GCM.
 

@@ -70,9 +70,44 @@ from security_utils import (  # noqa: E402
     MAX_FILE_SIZE_BYTES,
     SAFE_EXTENSIONS,
     BLOCKED_EXTENSIONS,
+    check_upload_path,
+    validate_crypto_config,
 )
 
 client = TestClient(main.app, raise_server_exceptions=False)
+
+
+def test_test_bypass_is_rejected_when_testing_is_false(monkeypatch):
+    monkeypatch.setenv("RAKSHAK_TESTING", "0")
+    from fastapi.security import HTTPAuthorizationCredentials
+    import firebase_auth
+    with patch.object(firebase_auth.firebase_auth_module, "verify_id_token", side_effect=Exception("invalid token")):
+        with pytest.raises(Exception):
+            firebase_auth.verify_firebase_token(
+                HTTPAuthorizationCredentials(scheme="Bearer", credentials="__test_bypass__")
+            )
+    monkeypatch.setenv("RAKSHAK_TESTING", "1")
+
+
+def test_production_crypto_configuration_fails_closed(monkeypatch):
+    monkeypatch.setenv("RAKSHAK_TESTING", "0")
+    monkeypatch.delenv("RAKSHAK_AES_KEY", raising=False)
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    monkeypatch.delenv("RAKSHAK_SECRET_KEY", raising=False)
+    _get_aes_key.cache_clear()
+    with pytest.raises(RuntimeError):
+        validate_crypto_config()
+    monkeypatch.setenv("RAKSHAK_TESTING", "1")
+    _get_aes_key.cache_clear()
+
+
+def test_sibling_upload_prefix_is_rejected():
+    assert not check_upload_path("uploads", os.path.join("uploads_evil", "file.png"))
+
+
+def test_jsp_compound_extensions_are_rejected():
+    assert not validate_file_upload("payload.jsp", "text/plain", 10, b"safe")[0]
+    assert not validate_file_upload("payload.jsp.png", "image/png", 8, b"\x89PNG\r\n\x1a\n")[0]
 
 # ---------------------------------------------------------------------------
 # Auth helpers
@@ -264,13 +299,13 @@ class TestBlockedFileUploads:
         big = b"A" * (MAX_FILE_SIZE_BYTES + 1)
         res = self._post_session("big.png", big, "image/png")
         # Chunked upload returns 413 (Request Entity Too Large) for oversized files
-        assert res.status_code in (400, 413)
+        assert res.status_code == 413
 
     def test_oversized_file_blocked_firebase(self):
         big = b"A" * (MAX_FILE_SIZE_BYTES + 1)
         res = self._post_firebase("big.png", big, "image/png")
         # Chunked upload returns 413 (Request Entity Too Large) for oversized files
-        assert res.status_code in (400, 413)
+        assert res.status_code == 413
 
     # ── Error message is user-safe (no internal paths) ───────────────────────
     def test_error_message_no_internal_path(self):

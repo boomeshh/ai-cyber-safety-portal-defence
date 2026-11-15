@@ -40,11 +40,18 @@ from security_utils import (
     read_upload_chunked,
     encrypt_payload,
     decrypt_payload,
+    validate_crypto_config,
     MAX_FILE_SIZE_BYTES,
 )
+from rule_engine import calculate_rule_risk
 from seed_data import seed_complaints
 
 app = FastAPI(title="Rakshak AI - Hybrid ML Backend")
+
+
+@app.on_event("startup")
+def validate_startup_crypto_config() -> None:
+    validate_crypto_config()
 
 # Security middleware — order matters: rate limit first, then headers
 app.add_middleware(RateLimitMiddleware)
@@ -383,147 +390,6 @@ def extract_evidence_indicators(text: str, url: str) -> dict:
     }
 
 
-def calculate_rule_risk(complaint_text: str, suspicious_url: str, evidence_name: str = ""):
-    text = (complaint_text or "").lower()
-    url = (suspicious_url or "").lower()
-    file_name = (evidence_name or "").lower()
-
-    score = 0
-    indicators = []
-    risk_notes = []
-    tags = set()
-
-    keyword_weights = {
-        "otp": 25,
-        "password": 25,
-        "bank": 20,
-        "login": 18,
-        "verify": 16,
-        "urgent": 12,
-        "immediately": 10,
-        "suspended": 15,
-        "click": 10,
-        "army": 20,
-        "defence": 20,
-        "official": 12,
-        "support": 8,
-        "kyc": 10,
-        "update": 8,
-        "reward": 10,
-        "blocked": 12,
-        "account": 10,
-        "confidential": 16,
-        "classified": 28,
-        "posting": 14,
-        "deployment": 18,
-        "location": 12,
-        "salary": 8,
-        "investment": 8,
-        "apk": 22,
-        "attachment": 14,
-        "resume": 8,
-        "friend request": 14,
-        "romance": 18,
-        "video call": 18,
-        "refund": 14,
-        "cvv": 20,
-        "card": 12,
-        "transfer": 12,
-    }
-
-    for word, weight in keyword_weights.items():
-        if word in text:
-            score += weight
-            indicators.append(f"Suspicious keyword: {word}")
-
-    if url:
-        score += 10
-        indicators.append("URL submitted for analysis")
-        tags.add("Phishing")
-
-    if any(shortener in url for shortener in ["bit.ly", "tinyurl", "shorturl", "goo.gl"]):
-        score += 25
-        indicators.append("Shortened URL detected")
-        tags.add("Phishing")
-
-    if "http://" in url:
-        score += 10
-        indicators.append("Non-secure HTTP link detected")
-
-    if any(pattern in url for pattern in ["verify", "login", "update", "secure", "account", "gift", "bonus"]):
-        score += 12
-        indicators.append("Suspicious URL pattern detected")
-        tags.add("Phishing")
-
-    if file_name:
-        indicators.append(f"Evidence file attached: {file_name}")
-
-    if file_name.endswith((".apk", ".zip", ".exe")):
-        score += 28
-        indicators.append("Potential malware-bearing attachment detected")
-        tags.add("Malware")
-        risk_notes.append("Attachment may deliver malware or a trojanized application.")
-
-    if any(word in text for word in ["honeytrap", "romance", "friend request", "video call", "girl", "relationship"]):
-        score += 24
-        indicators.append("Possible honeytrap / social engineering indicators")
-        tags.add("Honeytrap / Social Engineering")
-        risk_notes.append("Conversation pattern may be trying to build trust before exploitation.")
-
-    if any(word in text for word in ["army", "defence", "regiment", "unit", "officer"]) and any(
-        word in text for word in ["verify", "official", "login", "payment", "kyc"]
-    ):
-        score += 26
-        indicators.append("Possible defence impersonation pattern detected")
-        tags.add("Defence Impersonation")
-        risk_notes.append("Message appears to misuse defence identity or authority cues.")
-
-    if any(word in text for word in ["classified", "deployment", "location", "movement", "unit strength"]):
-        score += 30
-        indicators.append("Potential OPSEC / sensitive operational data exposure")
-        tags.add("OPSEC Leak Risk")
-        risk_notes.append("Shared content may expose operational or location-sensitive information.")
-
-    if any(word in text for word in ["spy", "espionage", "confidential", "internal document"]):
-        score += 28
-        indicators.append("Potential espionage indicator identified")
-        tags.add("Espionage Indicator")
-        risk_notes.append("The complaint contains possible collection or exfiltration cues.")
-
-    if "otp" in text and "click" in text:
-        score += 15
-        indicators.append("Credential theft pattern detected")
-        tags.add("Phishing")
-        risk_notes.append("The message may redirect the victim to capture OTP or login credentials.")
-
-    if "bank" in text and "urgent" in text:
-        score += 15
-        indicators.append("High-pressure financial scam pattern detected")
-        tags.add("Financial Fraud")
-        risk_notes.append("Urgency and banking language suggest possible fraud or social engineering.")
-
-    if "password" in text and "login" in text:
-        score += 12
-        indicators.append("Account compromise pattern detected")
-        tags.add("Phishing")
-        risk_notes.append("Account credential compromise is likely if the message is acted upon.")
-
-    if not risk_notes:
-        risk_notes.append("The submitted content shows enough suspicious indicators to require verification through official channels.")
-
-    if not tags:
-        tags.add("Suspicious Communication")
-
-    score = min(score, 100)
-
-    return {
-        "rule_score": score,
-        "indicators": indicators,
-        "risk_notes": risk_notes,
-        "tags": tags,
-    }
-
-
 def build_hybrid_result(complaint_text: str, suspicious_url: str, evidence_name: str = ""):
     """Full hybrid analysis using rule engine + ML engine."""
     rule_result = calculate_rule_risk(complaint_text, suspicious_url, evidence_name)
@@ -547,6 +413,14 @@ def _safe_decrypt_complaint_text(raw: str) -> str:
         return decrypt_payload(raw)
     except Exception:
         return raw
+
+
+def _hydrate_complaint_row(row) -> dict:
+    hydrated = dict(row)
+    hydrated["complaint_text"] = _safe_decrypt_complaint_text(
+        hydrated.get("complaint_text") or ""
+    )
+    return hydrated
 
 
 def compute_file_hash(file_path: str) -> str:
@@ -573,11 +447,10 @@ def get_linked_case_count(suspicious_url: str, evidence_hash: str) -> int:
 
 def get_all_complaints_data():
     conn = get_connection()
-    rows = [dict(row) for row in conn.execute("SELECT * FROM complaints ORDER BY created_at DESC").fetchall()]
+    rows = [_hydrate_complaint_row(row) for row in conn.execute(
+        "SELECT * FROM complaints ORDER BY created_at DESC"
+    ).fetchall()]
     conn.close()
-    # Decrypt complaint_text for authorized triage/viewing — legacy rows pass through unchanged
-    for r in rows:
-        r["complaint_text"] = _safe_decrypt_complaint_text(r.get("complaint_text") or "")
     return rows
 
 
@@ -1698,9 +1571,7 @@ def get_my_complaints(user_id: str, authorization: Optional[str] = Header(defaul
 
     results = []
     for row in rows:
-        r = dict(row)
-        # Decrypt complaint_text at rest — handles legacy plaintext rows gracefully
-        r["complaint_text"] = _safe_decrypt_complaint_text(r.get("complaint_text") or "")
+        r = _hydrate_complaint_row(row)
         # Parse stored indicators for IOC
         import json as _json
         ev_ind = {}
@@ -1742,7 +1613,7 @@ def get_evidence_file(complaint_id: str, authorization: Optional[str] = Header(d
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    row = dict(row)
+    row = _hydrate_complaint_row(row)
 
     if user["role"] == "user" and row["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -2148,7 +2019,7 @@ def get_evidence_meta(complaint_id: str, authorization: Optional[str] = Header(d
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    row = dict(row)
+    row = _hydrate_complaint_row(row)
 
     if user["role"] == "user" and row["user_id"] != user["id"]:
         raise HTTPException(status_code=403, detail="Access denied")
@@ -2285,7 +2156,7 @@ def trigger_cert_alert(complaint_id: str, authorization: Optional[str] = Header(
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    row = dict(row)
+    row = _hydrate_complaint_row(row)
     alert = dispatch_cert_alert(
         complaint_id=complaint_id,
         risk_level=row.get("risk_level", "Unknown"),
@@ -2438,7 +2309,7 @@ def build_complaint_timeline(complaint_id: str) -> list[dict]:
     if not row:
         return []
 
-    row = dict(row)
+    row = _hydrate_complaint_row(row)
     events: list[dict] = []
 
     # 1. Reported
@@ -2780,7 +2651,7 @@ def get_incident_report(
     if not row:
         raise HTTPException(status_code=404, detail="Complaint not found")
 
-    row = dict(row)
+    row = _hydrate_complaint_row(row)
 
     import json as _json
     ev_ind = {}

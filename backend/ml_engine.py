@@ -156,7 +156,7 @@ def load_real_training_samples(db_path: str = DB_NAME) -> tuple[list, list]:
         ).fetchall()
         conn.close()
         for row in rows:
-            text = (row["complaint_text"] or "").strip()
+            text = _decrypt_complaint_text(row["complaint_text"] or "").strip()
             # Prefer corrected_label if available (admin feedback)
             raw = (row["corrected_label"] or row["threat_type"] or "").strip()
             if text and raw:
@@ -165,6 +165,17 @@ def load_real_training_samples(db_path: str = DB_NAME) -> tuple[list, list]:
     except Exception as e:
         logger.error(f"[ml_engine] Real DB read error: {e}")
     return texts, labels
+
+
+def _decrypt_complaint_text(value: str) -> str:
+    """Decrypt stored complaint text without importing the side-effectful API."""
+    if not value:
+        return ""
+    try:
+        from security_utils import decrypt_payload
+        return decrypt_payload(value)
+    except Exception:
+        return value
 
 
 def load_synthetic_training_samples(db_path: str = DB_NAME) -> tuple[list, list]:

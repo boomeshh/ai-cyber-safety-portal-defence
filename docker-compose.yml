@@ -8,6 +8,8 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       RAKSHAK_TESTING: "0"
+      # Local development key only; override with a managed 32-byte key in production.
+      RAKSHAK_AES_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     volumes:
       - rakshak-evidence:/app/uploads
     healthcheck:
