@@ -4,10 +4,7 @@ python-multipart>=0.0.12,<1.0.0
 pandas>=2.2.3,<3.0.0
 openpyxl>=3.1.5,<4.0.0
 pydantic[email]>=2.10.3,<3.0.0
-# 1.8.0 is retained for the tested Windows/Python 3.14 environment; Ubuntu
-# runners use the latest compatible manylinux release available there.
-scikit-learn==1.8.0; platform_system != "Linux"
-scikit-learn==1.7.2; platform_system == "Linux"
+scikit-learn==1.7.2
 python-dotenv>=1.0.1,<2.0.0
 resend>=2.5.0,<3.0.0
 firebase-admin>=6.6.0,<7.0.0
